@@ -1,4 +1,4 @@
-# Marbles 🔮
+# Bubbles 🔮
 
 A classic **Bubble Shooter** game built with Python and Pygame.
 
@@ -7,9 +7,9 @@ A classic **Bubble Shooter** game built with Python and Pygame.
 
 ## Overview
 
-Marbles is a colorful puzzle game where you shoot bubbles to match 3 or more of the same color, causing them to pop. Clear all bubbles to win, but don't let them reach the bottom!
+Bubbles is a colorful puzzle game where you shoot bubbles to match 3 or more of the same color, causing them to pop. Clear all bubbles to win, but don't let them reach the bottom!
 
-![Marbles Screenshot](screenshot.png)
+![Bubbles Screenshot](screenshot.png)
 
 ## Features
 

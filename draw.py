@@ -7,13 +7,13 @@ import random
 pygame.init()
 
 # Constants
-BUBBLE_SIZE = 40
+BUBBLE_SIZE = 60
 BUBBLE_SPACE = 10
 GRID_WIDTH = 17
 GRID_HEIGHT = 15
 INIT_HEIGHT = 9
 
-SCREEN_WIDTH = (BUBBLE_SIZE + BUBBLE_SPACE // 2) * GRID_WIDTH
+SCREEN_WIDTH = (BUBBLE_SIZE + BUBBLE_SPACE // 2) * GRID_WIDTH + BUBBLE_SIZE // 2 + BUBBLE_SPACE // 2
 SCREEN_HEIGHT = (BUBBLE_SIZE + BUBBLE_SPACE // 2) * GRID_HEIGHT
 
 # Colors
@@ -34,10 +34,18 @@ def load_bubble_image(color):
 # Bubble colors
 colors = [WHITE, (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)]
 
-def get_center(c):
-    return c * (BUBBLE_SIZE + BUBBLE_SPACE//2) + BUBBLE_SIZE // 2 + BUBBLE_SPACE // 2
+def get_center(cx, cy):
+    shift = cy % 2
+    x = cx * (BUBBLE_SIZE + BUBBLE_SPACE//2) + (BUBBLE_SIZE // 2 + BUBBLE_SPACE // 2) * (shift + 1)
+    y = cy * (BUBBLE_SIZE + BUBBLE_SPACE//5) + BUBBLE_SIZE // 2 + BUBBLE_SPACE // 5
+    return x, y
 
-def neigbour_cells(cell):
+def get_distance(point1, point2):
+    return math.sqrt(
+        (point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2
+    )
+
+def simple_neigbour_cells(cell):
     cx, cy = cell
     for next_cx, next_cy in [
         (cx, cy+1),
@@ -55,6 +63,41 @@ def neigbour_cells(cell):
             continue
         yield (next_cx, next_cy)
 
+#  1  2  3
+#    4  5  6
+#  7  8  9
+#   10 11 12
+def neigbour_cells(cell):
+    cx, cy = cell
+    if cy % 2 == 1: # 5 is selected
+        neighbours = [
+            #(cx-1, cy-1),   # 1
+            (cx, cy-1),     # 2
+            (cx+1, cy-1),   # 3
+            (cx-1, cy),   # 4
+            (cx+1, cy),   # 6
+            #(cx-1, cy+1),   # 7
+            (cx, cy+1),     # 8
+            (cx+1, cy+1),   # 9
+        ]
+    else: # 8 is selected
+        neighbours = [
+            (cx-1, cy-1),   # 4
+            (cx, cy-1),     # 5
+            #(cx+1, cy-1),   # 6
+            (cx-1, cy),   # 7
+            (cx+1, cy),   # 9
+            (cx-1, cy+1),   # 10
+            (cx, cy+1),     # 11
+            #(cx+1, cy+1),   # 12
+        ]
+    for next_cx, next_cy in neighbours:
+        if next_cx < 0 or next_cy < 0:
+            continue
+        if next_cx >= GRID_WIDTH or next_cy >= GRID_HEIGHT:
+            continue
+        yield (next_cx, next_cy)
+
 class Board:
     def __init__(self):
         self.next_bubble = None
@@ -62,15 +105,14 @@ class Board:
         # Group for all bubbles
         self.bubbles = pygame.sprite.Group()
         # Speed modifier
-        self.speed = 1  # Default speed
+        self.speed = 3  # Default speed
         self.colors = colors
-
 
     def create_next_bubble(self):
         assert not self.next_bubble
         x, y = SCREEN_WIDTH // 2, SCREEN_HEIGHT - 30
         color = random.choice(self.colors)
-        self.next_bubble= Bubble(x, y, 0, 0, color)
+        self.next_bubble = Bubble(x, y, 0, 0, color)
         self.bubbles.add(self.next_bubble)
 
     def shoot_bubble(self):
@@ -97,28 +139,41 @@ class Board:
         for cy in range(INIT_HEIGHT):
             for cx in range(GRID_WIDTH):
                 color = random.choice(self.colors)
-                bubble = Bubble(
-                    get_center(cx),
-                    get_center(cy),
-                    0,
-                    0,
-                    color)
+                x, y = get_center(cx, cy)
+                bubble = Bubble(x, y, 0, 0, color)
                 self.bubbles.add(bubble)
 
     def check_collisions(self):
         if not self.current_bubble:
             return
         bubble = self.current_bubble
+        if get_distance(
+            (self.current_bubble.x, self.current_bubble.y),
+            (self.current_bubble.x, 0),
+        ) < BUBBLE_SIZE * 0.7:
+            self.handle_top_collision()
+            return
         # Check for collision with other bubbles
         # The first False is for not killing the bubble being checked; the second is to use the collide_circle method
         collided_bubbles = pygame.sprite.spritecollide(
             bubble, self.bubbles, False, pygame.sprite.collide_circle)
         if len(collided_bubbles) > 1:  # It always finds itself, so more than 1 means it hit another bubble
-            self.handle_collision(collided_bubbles)
+            self.handle_bubble_collision(collided_bubbles)
 
-    def handle_collision(self, collided_bubbles):
-        # TODO: snap when it's close enough
+    def handle_top_collision(self):
         self.snap()
+
+    def handle_bubble_collision(self, collided_bubbles):
+        for bubble in collided_bubbles:
+            if bubble is self.current_bubble:
+                continue
+            distance = get_distance(
+                (self.current_bubble.x, self.current_bubble.y),
+                (bubble.x, bubble.y)
+            )
+            if distance < BUBBLE_SIZE * 0.7:
+                self.snap()
+                break
 
     def snap(self):
         assert self.current_bubble
@@ -132,11 +187,10 @@ class Board:
         closest_distance = None
         for cy in range(GRID_HEIGHT):
             for cx in range(GRID_WIDTH):
-                x = get_center(cx)
-                y = get_center(cy)
+                x, y = get_center(cx, cy)
                 if (x, y) in occupied:
                     continue
-                distance = (self.current_bubble.x-x)**2 + (self.current_bubble.y-y)**2
+                distance = get_distance((self.current_bubble.x, self.current_bubble.y), (x, y))
                 if not closest_distance or closest_distance > distance:
                     closest_coordinates = (x, y)
                     closest_distance = distance
@@ -149,6 +203,16 @@ class Board:
 
     def traverse(self, point):
         # build grid
+        grid_bubbles = self.build_grid()
+        for cell, bubble in grid_bubbles.items():
+            if not bubble:
+                continue
+            if (bubble.x, bubble.y) == point:
+                start_cell = cell
+        if self.match_color_count(start_cell, grid_bubbles) >= 3:
+            self.kill_same_color(start_cell, grid_bubbles)
+
+    def build_grid(self):
         position_to_bubble = {}
         for v in self.bubbles:
             position_to_bubble[(v.x, v.y)] = v
@@ -156,24 +220,31 @@ class Board:
         start_cell = None
         for cy in range(GRID_HEIGHT):
             for cx in range(GRID_WIDTH):
-                x = get_center(cx)
-                y = get_center(cy)
-                if (x, y) == point:
-                    start_cell = (cx, cy)
+                x, y = get_center(cx, cy)
                 grid_bubbles[(cx, cy)] =  position_to_bubble.get((x, y))
-        # traverse starting from point (start_cell)
-        has_color_match = False
-        starting_bubble = grid_bubbles[start_cell]
-        for cell in neigbour_cells(start_cell):
-            bubble = grid_bubbles.get(cell)
-            if not bubble:
-                continue
-            if bubble.color == starting_bubble.color:
-                has_color_match = True
-                break
-        # if adjustent balls contains same color remove all such colors.
-        if not has_color_match:
-            return
+        return grid_bubbles
+
+    def match_color_count(self, start_cell, grid_bubbles):
+        cells = [start_cell]
+        seen = set()
+        count = 0
+        while cells:
+            cell = cells.pop(0)
+            seen.add(cell)
+            bubble = grid_bubbles[cell]
+            count += 1
+            for next_cell in neigbour_cells(cell):
+                if next_cell in seen:
+                    continue
+                next_bubble = grid_bubbles.get(next_cell)
+                if not next_bubble:
+                    continue
+                if next_bubble.color != bubble.color:
+                    continue
+                cells.append(next_cell)
+        return count
+
+    def kill_same_color(self, start_cell, grid_bubbles):
         cells = [start_cell]
         seen = set()
         while cells:
@@ -191,10 +262,41 @@ class Board:
                     continue
                 cells.append(next_cell)
 
+    def remove_disjoint(self):
+        grid_bubbles = self.build_grid()
+        cells = []
+        for cell, bubble in grid_bubbles.items():
+            if not bubble:
+                continue
+            if cell[1] == 0:
+                cells.append(cell)
+
+        seen = set()
+        while cells:
+            cell = cells.pop(0)
+            if cell in seen:
+                continue
+            seen.add(cell)
+            bubble = grid_bubbles[cell]
+            for next_cell in neigbour_cells(cell):
+                if next_cell in seen:
+                    continue
+                next_bubble = grid_bubbles.get(next_cell)
+                if not next_bubble:
+                    continue
+                cells.append(next_cell)
+
+        for cell, bubble in grid_bubbles.items():
+            if not bubble:
+                continue
+            if cell not in seen:
+                bubble.kill()
+
 
     def check_state(self):
         # Current bubble become part of the board or destroyed
         if self.current_bubble is None and self.next_bubble is None:
+            self.remove_disjoint()
             # New game
             if len(self.bubbles) == 0:
                 self.init()

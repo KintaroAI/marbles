@@ -2,6 +2,7 @@ import pygame
 import sys
 import math
 import random
+import time
 
 # Initialize Pygame
 pygame.init()
@@ -16,6 +17,8 @@ INIT_HEIGHT = 9
 SCREEN_WIDTH = (BUBBLE_SIZE + BUBBLE_SPACE // 2) * GRID_WIDTH + BUBBLE_SIZE // 2 + BUBBLE_SPACE
 SCREEN_HEIGHT = (BUBBLE_SIZE + BUBBLE_SPACE // 2) * GRID_HEIGHT
 
+TRIES = [5, 4, 3, 2, 1, 0]
+
 # Colors
 BACKGROUND = (160, 192, 255)
 PURPLE= (101, 35, 148)
@@ -29,7 +32,7 @@ ORANGE = (254, 183, 42)
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption("Bubbles")
 clock = pygame.time.Clock()
-fps = 60  # Lower frame rate to reduce CPU load
+fps = 100  # Lower frame rate to reduce CPU load
 
 
 def border_color(color):
@@ -131,10 +134,33 @@ class Board:
         # Group for all bubbles
         self.bubbles = pygame.sprite.Group()
         # Speed modifier
-        self.speed = 20  # Default speed
+        self.speed = 15  # Default speed
         self.colors = colors
         self.state = Board.RELOAD
         self.removing_bubbles = []
+        self.step = 0
+        self.tries = -1
+        self.refresh_tries()
+
+    def refresh_tries(self):
+        self.tries = TRIES[self.step % len(TRIES)]
+
+    def advance(self):
+        # Add new row on top
+        grid = self.build_grid()
+        for cell, bubble in grid.items():
+            if not bubble:
+                continue
+            cx, cy = cell
+            x, y = get_center(cx, cy + 1)
+            bubble.x = x
+            bubble.y = y
+        cy = 0
+        for cx in range(GRID_WIDTH):
+            color = random.choice(self.colors)
+            x, y = get_center(cx, cy)
+            bubble = Bubble(x, y, 0, 0, color)
+            self.bubbles.add(bubble)
 
     def create_next_bubble(self):
         assert self.state is Board.RELOAD
@@ -168,14 +194,8 @@ class Board:
     def init(self):
         self.state = Board.RELOAD
         self.colors = colors
-        if not self.next_bubble:
-            self.create_next_bubble()
-        for cy in range(INIT_HEIGHT):
-            for cx in range(GRID_WIDTH):
-                color = random.choice(self.colors)
-                x, y = get_center(cx, cy)
-                bubble = Bubble(x, y, 0, 0, color)
-                self.bubbles.add(bubble)
+        for _ in range(INIT_HEIGHT):
+            self.advance()
 
     def check_collisions(self):
         if not self.current_bubble:
@@ -248,6 +268,13 @@ class Board:
                 start_cell = cell
         if self.match_color_count(start_cell, grid_bubbles) >= 3:
             self.kill_same_color(start_cell, grid_bubbles)
+        else:
+            self.tries -= 1
+            if self.tries < 0:
+                self.step += 1
+                self.advance()
+                self.refresh_tries()
+
 
     def build_grid(self):
         position_to_bubble = {}
@@ -360,7 +387,7 @@ class Board:
 
 
 class Bubble(pygame.sprite.Sprite):
-    MAX_ENERGY = 15
+    MAX_ENERGY = 10
     def __init__(self, x, y, dx, dy, color):
         super().__init__()
         self.color = color
@@ -372,7 +399,7 @@ class Bubble(pygame.sprite.Sprite):
         self.y = y
         self.energy = Bubble.MAX_ENERGY
 
-    def update(self):
+    def update(self, mouse_pos):
         self.x = 1.0*self.x + self.dx
         self.y = 1.0*self.y + self.dy
         self.rect.x = self.x - BUBBLE_SIZE//2
@@ -381,14 +408,14 @@ class Bubble(pygame.sprite.Sprite):
             self.dx = -self.dx
         if self.rect.top <= 0:
             self.dy = -self.dy
-        if self.rect.bottom >= SCREEN_HEIGHT + BUBBLE_SIZE:
-            if self is board.current_bubble:
-                board.current_bubble = None
-            self.kill()  # This removes the Sprite from all Groups it belongs to
+        if self.rect.collidepoint(mouse_pos):
+            self.image.set_alpha(128)
+        else:
+            self.image.set_alpha(255)
 
     def blow_step(self):
-        self.energy -= 3
-        self.y += 3.0
+        self.energy -= 1
+        self.y += 1.0
         self.image.set_alpha(255.0*self.energy/Bubble.MAX_ENERGY)
         if self.energy <= 0:
             self.kill()
@@ -398,25 +425,38 @@ class Bubble(pygame.sprite.Sprite):
 running = True
 board = Board()
 board.init()
+force_refresh = False
+last_changed_time = time.time()
+last_pos = None
 while running:
+    mouse_pos = pygame.mouse.get_pos()
+    if mouse_pos != last_pos:
+        last_pos = mouse_pos
+        last_changed_time = time.time()
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
         if event.type == pygame.MOUSEBUTTONDOWN:
             if event.button == pygame.BUTTON_LEFT:
                 board.shoot_bubble()
+            if event.button == pygame.BUTTON_RIGHT:
+                board.advance()
+                force_refresh = True
 
-    # Update game state
-    board.bubbles.update()
+    if board.state != Board.READY or force_refresh or last_changed_time > time.time() - 20.0:
+        force_refresh = False
 
-    board.check_collisions()
+        # Update game state
+        board.bubbles.update(mouse_pos)
 
-    board.check_state()
+        board.check_collisions()
 
-    # Draw everything
-    screen.fill(BACKGROUND)
-    board.bubbles.draw(screen)
-    pygame.display.flip()
+        board.check_state()
+
+        # Draw everything
+        screen.fill(BACKGROUND)
+        board.bubbles.draw(screen)
+        pygame.display.flip()
     clock.tick(fps)
 
 pygame.quit()

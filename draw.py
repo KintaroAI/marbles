@@ -38,16 +38,17 @@ PREVIEW_BUBBLE_Y = SCREEN_HEIGHT - BUBBLE_SIZE - BUBBLE_SPACE
 # Setup the display
 screen = pygame.display.set_mode(
     (SCREEN_WIDTH, SCREEN_HEIGHT),
-    #pygame.HWSURFACE | pygame.DOUBLEBUF
+    pygame.HWSURFACE | pygame.DOUBLEBUF
 )
 pygame.display.set_caption("Bubbles")
 clock = pygame.time.Clock()
-fps = 100  # Lower frame rate to reduce CPU load
+fps = 120  # Lower frame rate to reduce CPU load
 
 GAME_OVER_EVENT = pygame.USEREVENT
 STATE_CHANGE_EVENT = pygame.USEREVENT + 1
 TRAVERSE_EVENT = pygame.USEREVENT + 2
 
+DEBUG = False
 
 def border_color(color):
     return tuple([0.7*x for x in color])
@@ -74,6 +75,8 @@ def load_bubble_image(color):
 colors = [PINK, RED, PURPLE, BLUE, GREEN, ORANGE]
 
 def probe(name):
+    if not DEBUG:
+        return
     stack = inspect.stack()
     # The caller information is in the first position after the current stack frame
     for caller in stack:
@@ -170,7 +173,7 @@ class Board:
         self.bubbles = pygame.sprite.Group()
         self.elements = pygame.sprite.Group()
         # Speed modifier
-        self.speed = 15  # Default speed
+        self.speed = 12  # Default speed
         self.colors = colors
         self._state = Board.RELOAD
         self.removing_bubbles = []
@@ -185,7 +188,8 @@ class Board:
 
     @state.setter
     def state(self, state):
-        print('Set state: old_state = %s, new_state = %s' % (self._state, state))
+        if DEBUG:
+            print('Set state: old_state = %s, new_state = %s' % (self._state, state))
         # probe('Set state')
         self._state = state
 
@@ -196,7 +200,8 @@ class Board:
 
     def trigger_state_change(self, state):
         key = (self.state, state)
-        print('Trigger state change %s -> %s' % key)
+        if DEBUG:
+            print('Trigger state change %s -> %s' % key)
         assert key in Board.VALID_STATES, 'Invalid key: %s' % (key,)
         # TODO: Check if state change from old state to new state is allowed.
         event = pygame.event.Event(STATE_CHANGE_EVENT, message=(self.state, state))
@@ -584,7 +589,8 @@ class Bubble(pygame.sprite.Sprite):
         self.cy = cy
         #print(cx, cy, GAME_OVER_GRID_HEIGHT)
         if (cy + 1) >= GAME_OVER_GRID_HEIGHT:
-            print('cx = %s, cy = %s' % (cx, cy))
+            if DEBUG:
+                print('cx = %s, cy = %s' % (cx, cy))
             board.trigger_game_over(win=False)
 
     def set_speed(self, dx, dy):
@@ -615,7 +621,8 @@ def on_game_over(board, win):
 
 def on_state_change(board, from_state, to_state):
     assert board.state == from_state, '%s != %s' % (board.state, from_state)
-    print('State change %s -> %s' % (from_state, to_state))
+    if DEBUG:
+        print('State change %s -> %s' % (from_state, to_state))
     board.state = to_state
 
 # Main game loop

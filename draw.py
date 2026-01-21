@@ -3,6 +3,7 @@ import sys
 import math
 import random
 import time
+import inspect
 
 # Initialize Pygame
 pygame.init()
@@ -35,10 +36,17 @@ PREVIEW_BUBBLE_X = SCREEN_WIDTH // 2
 PREVIEW_BUBBLE_Y = SCREEN_HEIGHT - BUBBLE_SIZE - BUBBLE_SPACE
 
 # Setup the display
-screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+screen = pygame.display.set_mode(
+    (SCREEN_WIDTH, SCREEN_HEIGHT),
+    #pygame.HWSURFACE | pygame.DOUBLEBUF
+)
 pygame.display.set_caption("Bubbles")
 clock = pygame.time.Clock()
 fps = 100  # Lower frame rate to reduce CPU load
+
+GAME_OVER_EVENT = pygame.USEREVENT
+STATE_CHANGE_EVENT = pygame.USEREVENT + 1
+TRAVERSE_EVENT = pygame.USEREVENT + 2
 
 
 def border_color(color):
@@ -64,6 +72,15 @@ def load_bubble_image(color):
 
 # Bubble colors
 colors = [PINK, RED, PURPLE, BLUE, GREEN, ORANGE]
+
+def probe(name):
+    stack = inspect.stack()
+    # The caller information is in the first position after the current stack frame
+    for caller in stack:
+        frame = caller[0]
+        info = inspect.getframeinfo(frame)
+        # Print caller information
+        print(f"{name}. Called at line {info.lineno}")
 
 def get_center(cx, cy):
     shift = cy % 2
@@ -130,11 +147,21 @@ def neigbour_cells(cell):
         yield (next_cx, next_cy)
 
 class Board:
+    REMOVE_DISJOINT = 'REMOVE_DISJOINT'
     RELOAD = 'RELOAD'
     ADVANCING = 'ADVANCING'  # second preview bubble -> preview bubble
     READY = 'READY'
     SHOOT = 'SHOOT'
     REMOVING_BUBBLES = 'REMOVING_BUBBLES'
+    VALID_STATES = {
+        (RELOAD, ADVANCING),
+        (ADVANCING, READY),
+        (READY, SHOOT),
+        (SHOOT, REMOVING_BUBBLES),
+        (REMOVING_BUBBLES, REMOVE_DISJOINT),
+        (REMOVE_DISJOINT, REMOVING_BUBBLES),
+        (REMOVE_DISJOINT, RELOAD),
+    }
     def __init__(self):
         self.second_preview_bubble = None
         self.preview_bubble = None
@@ -145,13 +172,39 @@ class Board:
         # Speed modifier
         self.speed = 15  # Default speed
         self.colors = colors
-        self.state = Board.RELOAD
+        self._state = Board.RELOAD
         self.removing_bubbles = []
         self.step = 0
         self.tries = -1
         self.refresh_tries()
-        self.game_over = False
-        self.win = False
+
+
+    @property
+    def state(self):
+        return self._state  # Getter method
+
+    @state.setter
+    def state(self, state):
+        print('Set state: old_state = %s, new_state = %s' % (self._state, state))
+        # probe('Set state')
+        self._state = state
+
+    def trigger_game_over(self, win):
+        probe("Game over")
+        event = pygame.event.Event(GAME_OVER_EVENT, message=win)
+        pygame.event.post(event)
+
+    def trigger_state_change(self, state):
+        key = (self.state, state)
+        print('Trigger state change %s -> %s' % key)
+        assert key in Board.VALID_STATES, 'Invalid key: %s' % (key,)
+        # TODO: Check if state change from old state to new state is allowed.
+        event = pygame.event.Event(STATE_CHANGE_EVENT, message=(self.state, state))
+        pygame.event.post(event)
+
+    def trigger_traverse(self, cell):
+        event = pygame.event.Event(TRAVERSE_EVENT, message=cell)
+        pygame.event.post(event)
 
     def refresh_tries(self):
         self.tries = TRIES[self.step % len(TRIES)]
@@ -177,14 +230,11 @@ class Board:
         assert self.state is Board.RELOAD
         assert not self.preview_bubble
         self.shoot_bubble_to_target(
-            self.second_preview_bubble, (PREVIEW_BUBBLE_X, PREVIEW_BUBBLE_Y))
-        self.state = Board.ADVANCING
-        return
-        x, y = SCREEN_WIDTH // 2, SCREEN_HEIGHT - BUBBLE_SIZE - BUBBLE_SPACE
-        color = random.choice(self.colors)
-        self.preview_bubble = Bubble(x, y, 0, 0, color, -1, -1)
-        self.bubbles.add(self.preview_bubble)
-        self.state = Board.READY
+            self.second_preview_bubble,
+            (PREVIEW_BUBBLE_X, PREVIEW_BUBBLE_Y),
+            self.speed*2
+        )
+        self.trigger_state_change(Board.ADVANCING)
 
     def create_second_preview_bubble(self):
         x, y = SCREEN_WIDTH // 4, SCREEN_HEIGHT - BUBBLE_SIZE - BUBBLE_SPACE
@@ -200,15 +250,17 @@ class Board:
         self.shoot_bubble_to_target(self.preview_bubble, pygame.mouse.get_pos())
         self.current_bubble = self.preview_bubble
         self.preview_bubble = None
-        self.state = Board.SHOOT
+        self.trigger_state_change(Board.SHOOT)
 
-    def shoot_bubble_to_target(self, bubble, target):
+    def shoot_bubble_to_target(self, bubble, target, speed=None):
+        if speed is None:
+            speed = self.speed
         x, y = bubble.x, bubble.y
         target_x, target_y = target
         angle = math.atan2(target_y - y, target_x - x)
         bubble.set_speed(
-            math.cos(angle) * self.speed,
-            math.sin(angle) * self.speed
+            math.cos(angle) * speed,
+            math.sin(angle) * speed
         )
 
     def update_colors(self):
@@ -224,14 +276,16 @@ class Board:
         bubble = Bubble(x, y, 0, 0, color, -1, -1)
         bubble.shimmer = Bubble.SHIMMER_MAX
         self.elements.add(bubble)
- 
+
 
     def init(self):
+        pygame.event.clear()
         self.step = 0
         self.tries = -1
+        self.second_preview_bubble = None
+        self.preview_bubble = None
+        self.current_bubble = None
         self.refresh_tries()
-        self.game_over = False
-        self.win = False
         self.state = Board.RELOAD
         self.colors = colors
         for bubble in list(self.bubbles):
@@ -302,8 +356,8 @@ class Board:
         self.current_bubble.set_cell_pos(closest_cell)
         self.current_bubble.set_speed(0, 0)
         self.current_bubble = None
-        self.state = Board.REMOVING_BUBBLES
-        self.traverse(closest_cell)
+        self.trigger_state_change(Board.REMOVING_BUBBLES)
+        self.trigger_traverse(closest_cell)
 
     def traverse(self, start_cell):
         assert self.state is Board.REMOVING_BUBBLES
@@ -319,6 +373,14 @@ class Board:
 
 
     def build_grid(self):
+        grid_bubbles = {}
+        for bubble in self.bubbles:
+            if bubble in [self.current_bubble, self.preview_bubble, self.second_preview_bubble]:
+                continue
+            grid_bubbles[(bubble.cx, bubble.cy)] = bubble
+        return grid_bubbles
+
+    def build_grid_old(self):
         position_to_bubble = {}
         for v in self.bubbles:
             position_to_bubble[(v.x, v.y)] = v
@@ -370,7 +432,7 @@ class Board:
                 cells.append(next_cell)
 
     def remove_disjoint(self):
-        assert self.state is Board.RELOAD
+        assert self.state is Board.REMOVE_DISJOINT
         grid_bubbles = self.build_grid()
         cells = []
         for cell, bubble in grid_bubbles.items():
@@ -398,13 +460,16 @@ class Board:
             if not bubble:
                 continue
             if cell not in seen:
-                self.state = Board.REMOVING_BUBBLES
                 self.removing_bubbles.append(bubble)
+        if self.removing_bubbles:
+            self.trigger_state_change(Board.REMOVING_BUBBLES)
+        else:
+            self.trigger_state_change(Board.RELOAD)
 
     def check_removing_bubbles(self):
         assert self.state is Board.REMOVING_BUBBLES
         if not self.removing_bubbles:
-            self.state = Board.RELOAD
+            self.trigger_state_change(Board.REMOVE_DISJOINT)
             return
         bubble = self.removing_bubbles[0]
         if not bubble.alive():
@@ -413,14 +478,13 @@ class Board:
         bubble.blow_step()
 
     def check_state(self):
-        if self.state is Board.RELOAD:
+        if self.state is Board.REMOVE_DISJOINT:
             self.remove_disjoint()
 
         if self.state is Board.RELOAD:
             # New game
             if len(self.bubbles) == 1:  # Only second preview bubble left
-                self.game_over = True
-                self.win = True
+                self.trigger_game_over(win=True)
             else:
                 self.update_colors()
                 self.advance_preview_bubble()
@@ -434,7 +498,8 @@ class Board:
                 self.preview_bubble.dx = 0
                 self.preview_bubble.dy = 0
                 self.preview_bubble.shimmer = Bubble.SHIMMER_MAX
-                self.state = Board.READY
+                #self.state = Board.READY
+                self.trigger_state_change(Board.READY)
 
 
     def start_shimmer(self, start_cell=(0, 0), same_color=False):
@@ -517,9 +582,10 @@ class Bubble(pygame.sprite.Sprite):
         self.y = y
         self.cx = cx
         self.cy = cy
+        #print(cx, cy, GAME_OVER_GRID_HEIGHT)
         if (cy + 1) >= GAME_OVER_GRID_HEIGHT:
-            board.game_over = True
-            board.win = False
+            print('cx = %s, cy = %s' % (cx, cy))
+            board.trigger_game_over(win=False)
 
     def set_speed(self, dx, dy):
         self.dx = dx
@@ -543,6 +609,14 @@ def draw_multiline_text(surface, text, pos, font, color=(255, 255, 255), line_sp
         surface.blit(line_surface, (x, y))
         y += font.get_height() + line_spacing  # Move y position for the next line
 
+def on_game_over(board, win):
+    board.init()
+    board.start_shimmer()
+
+def on_state_change(board, from_state, to_state):
+    assert board.state == from_state, '%s != %s' % (board.state, from_state)
+    print('State change %s -> %s' % (from_state, to_state))
+    board.state = to_state
 
 # Main game loop
 running = True
@@ -566,6 +640,14 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+        if event.type == GAME_OVER_EVENT:
+            on_game_over(board, event.message)
+            break
+        if event.type == STATE_CHANGE_EVENT:
+            on_state_change(board, *(event.message))
+        if event.type == TRAVERSE_EVENT:
+            board.traverse(event.message)
+
         if event.type == pygame.MOUSEBUTTONDOWN:
             if event.button == pygame.BUTTON_LEFT:
                 board.shoot_bubble()
@@ -577,10 +659,6 @@ while running:
     clock.tick(fps)
     if pause:
         continue
-    # Check game over
-    if board.game_over:
-        board.init()
-        board.start_shimmer()
 
     if board.state != Board.READY or force_refresh or last_changed_time > time.time() - 20.0:
         force_refresh = False

@@ -7,37 +7,59 @@ import random
 pygame.init()
 
 # Constants
-BUBBLE_SIZE = 60
-BUBBLE_SPACE = 10
+BUBBLE_SIZE = 80
+BUBBLE_SPACE = 16
 GRID_WIDTH = 17
 GRID_HEIGHT = 15
 INIT_HEIGHT = 9
 
-SCREEN_WIDTH = (BUBBLE_SIZE + BUBBLE_SPACE // 2) * GRID_WIDTH + BUBBLE_SIZE // 2 + BUBBLE_SPACE // 2
+SCREEN_WIDTH = (BUBBLE_SIZE + BUBBLE_SPACE // 2) * GRID_WIDTH + BUBBLE_SIZE // 2 + BUBBLE_SPACE
 SCREEN_HEIGHT = (BUBBLE_SIZE + BUBBLE_SPACE // 2) * GRID_HEIGHT
 
 # Colors
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
+BACKGROUND = (160, 192, 255)
+PURPLE= (101, 35, 148)
+BLUE = (1, 154, 255)
+PINK = (249, 115, 223)
+RED = (255, 20, 20)
+GREEN = (101, 255, 1)
+ORANGE = (254, 183, 42)
 
 # Setup the display
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption("Bubbles")
+clock = pygame.time.Clock()
+fps = 60  # Lower frame rate to reduce CPU load
+
+
+def border_color(color):
+    return tuple([0.7*x for x in color])
+
+def check_color_max(c):
+    if c > 255:
+        return 255
+    return c
+
+def highlight_color(color):
+    return tuple([check_color_max(1.3*x) for x in color])
 
 # Load bubble images or use simple circles
 def load_bubble_image(color):
     # Placeholder for loading a bubble image
     surface = pygame.Surface((BUBBLE_SIZE, BUBBLE_SIZE), pygame.SRCALPHA)
-    pygame.draw.circle(surface, color, (BUBBLE_SIZE // 2, BUBBLE_SIZE // 2), BUBBLE_SIZE // 2)
+    border_width = 6
+    pygame.draw.circle(surface, border_color(color), (BUBBLE_SIZE // 2, BUBBLE_SIZE // 2), BUBBLE_SIZE // 2)
+    pygame.draw.circle(surface, color, (BUBBLE_SIZE // 2, BUBBLE_SIZE // 2), BUBBLE_SIZE // 2 - border_width)
+    pygame.draw.circle(surface, highlight_color(color), (BUBBLE_SIZE // 2, BUBBLE_SIZE // 2), BUBBLE_SIZE // 5)
     return surface
 
 # Bubble colors
-colors = [WHITE, (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)]
+colors = [PINK, RED, PURPLE, BLUE, GREEN, ORANGE]
 
 def get_center(cx, cy):
     shift = cy % 2
     x = cx * (BUBBLE_SIZE + BUBBLE_SPACE//2) + (BUBBLE_SIZE // 2 + BUBBLE_SPACE // 2) * (shift + 1)
-    y = cy * (BUBBLE_SIZE + BUBBLE_SPACE//5) + BUBBLE_SIZE // 2 + BUBBLE_SPACE // 5
+    y = cy * (BUBBLE_SIZE *0.8 + BUBBLE_SPACE) + BUBBLE_SIZE // 2 + BUBBLE_SPACE
     return x, y
 
 def get_distance(point1, point2):
@@ -99,25 +121,34 @@ def neigbour_cells(cell):
         yield (next_cx, next_cy)
 
 class Board:
+    RELOAD = 0
+    READY = 1
+    SHOOT = 2
+    REMOVING_BUBBLES = 3
     def __init__(self):
         self.next_bubble = None
         self.current_bubble = None
         # Group for all bubbles
         self.bubbles = pygame.sprite.Group()
         # Speed modifier
-        self.speed = 3  # Default speed
+        self.speed = 20  # Default speed
         self.colors = colors
+        self.state = Board.RELOAD
+        self.removing_bubbles = []
 
     def create_next_bubble(self):
+        assert self.state is Board.RELOAD
         assert not self.next_bubble
         x, y = SCREEN_WIDTH // 2, SCREEN_HEIGHT - 30
         color = random.choice(self.colors)
         self.next_bubble = Bubble(x, y, 0, 0, color)
         self.bubbles.add(self.next_bubble)
+        self.state = Board.READY
 
     def shoot_bubble(self):
         if not self.next_bubble:
             return
+        assert self.state is Board.READY
         x, y = self.next_bubble.x, self.next_bubble.y
         mouse_x, mouse_y = pygame.mouse.get_pos()
         angle = math.atan2(mouse_y - y, mouse_x - x)
@@ -125,14 +156,17 @@ class Board:
         self.next_bubble.dy = math.sin(angle) * self.speed
         self.current_bubble = self.next_bubble
         self.next_bubble = None
+        self.state = Board.SHOOT
 
     def update_colors(self):
+        assert self.state is Board.RELOAD
         updated_colors = set()
         for bubble in self.bubbles:
             updated_colors.add(bubble.color)
         self.colors = list(updated_colors)
 
     def init(self):
+        self.state = Board.RELOAD
         self.colors = colors
         if not self.next_bubble:
             self.create_next_bubble()
@@ -176,6 +210,7 @@ class Board:
                 break
 
     def snap(self):
+        assert self.state is Board.SHOOT
         assert self.current_bubble
         occupied = set()
         for bubble in self.bubbles:
@@ -199,9 +234,11 @@ class Board:
         self.current_bubble.dx = 0
         self.current_bubble.dy = 0
         self.current_bubble = None
+        self.state = Board.REMOVING_BUBBLES
         self.traverse(closest_coordinates)
 
     def traverse(self, point):
+        assert self.state is Board.REMOVING_BUBBLES
         # build grid
         grid_bubbles = self.build_grid()
         for cell, bubble in grid_bubbles.items():
@@ -245,13 +282,14 @@ class Board:
         return count
 
     def kill_same_color(self, start_cell, grid_bubbles):
+        assert self.state is Board.REMOVING_BUBBLES
         cells = [start_cell]
         seen = set()
         while cells:
             cell = cells.pop(0)
             seen.add(cell)
             bubble = grid_bubbles[cell]
-            bubble.kill()
+            self.removing_bubbles.append(bubble)
             for next_cell in neigbour_cells(cell):
                 if next_cell in seen:
                     continue
@@ -263,6 +301,7 @@ class Board:
                 cells.append(next_cell)
 
     def remove_disjoint(self):
+        assert self.state is Board.RELOAD
         grid_bubbles = self.build_grid()
         cells = []
         for cell, bubble in grid_bubbles.items():
@@ -290,23 +329,38 @@ class Board:
             if not bubble:
                 continue
             if cell not in seen:
-                bubble.kill()
+                self.state = Board.REMOVING_BUBBLES
+                self.removing_bubbles.append(bubble)
 
+    def check_removing_bubbles(self):
+        assert self.state is Board.REMOVING_BUBBLES
+        if not self.removing_bubbles:
+            self.state = Board.RELOAD
+            return
+        bubble = self.removing_bubbles[0]
+        if not bubble.alive():
+            self.removing_bubbles.pop(0)
+            return
+        bubble.blow_step()
 
     def check_state(self):
-        # Current bubble become part of the board or destroyed
-        if self.current_bubble is None and self.next_bubble is None:
+        if self.state is Board.RELOAD:
             self.remove_disjoint()
+
+        if self.state is Board.RELOAD:
             # New game
             if len(self.bubbles) == 0:
                 self.init()
             else:
                 self.update_colors()
                 self.create_next_bubble()
+        if self.state is Board.REMOVING_BUBBLES:
+            self.check_removing_bubbles()
 
 
 
 class Bubble(pygame.sprite.Sprite):
+    MAX_ENERGY = 15
     def __init__(self, x, y, dx, dy, color):
         super().__init__()
         self.color = color
@@ -316,6 +370,7 @@ class Bubble(pygame.sprite.Sprite):
         self.dy = dy
         self.x = x
         self.y = y
+        self.energy = Bubble.MAX_ENERGY
 
     def update(self):
         self.x = 1.0*self.x + self.dx
@@ -331,8 +386,12 @@ class Bubble(pygame.sprite.Sprite):
                 board.current_bubble = None
             self.kill()  # This removes the Sprite from all Groups it belongs to
 
-
-
+    def blow_step(self):
+        self.energy -= 3
+        self.y += 3.0
+        self.image.set_alpha(255.0*self.energy/Bubble.MAX_ENERGY)
+        if self.energy <= 0:
+            self.kill()
 
 
 # Main game loop
@@ -344,7 +403,8 @@ while running:
         if event.type == pygame.QUIT:
             running = False
         if event.type == pygame.MOUSEBUTTONDOWN:
-            board.shoot_bubble()
+            if event.button == pygame.BUTTON_LEFT:
+                board.shoot_bubble()
 
     # Update game state
     board.bubbles.update()
@@ -354,9 +414,10 @@ while running:
     board.check_state()
 
     # Draw everything
-    screen.fill(BLACK)
+    screen.fill(BACKGROUND)
     board.bubbles.draw(screen)
     pygame.display.flip()
+    clock.tick(fps)
 
 pygame.quit()
 sys.exit()

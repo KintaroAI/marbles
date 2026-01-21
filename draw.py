@@ -129,7 +129,7 @@ class Board:
     SHOOT = 2
     REMOVING_BUBBLES = 3
     def __init__(self):
-        self.next_bubble = None
+        self.preview_bubble = None
         self.current_bubble = None
         # Group for all bubbles
         self.bubbles = pygame.sprite.Group()
@@ -141,6 +141,8 @@ class Board:
         self.step = 0
         self.tries = -1
         self.refresh_tries()
+        self.game_over = False
+        self.win = False
 
     def refresh_tries(self):
         self.tries = TRIES[self.step % len(TRIES)]
@@ -152,36 +154,42 @@ class Board:
             if not bubble:
                 continue
             cx, cy = cell
-            x, y = get_center(cx, cy + 1)
+            cy += 1
+            if cy >= GRID_HEIGHT:
+                self.game_over = True
+                self.win = False
+            x, y = get_center(cx, cy)
             bubble.x = x
             bubble.y = y
+            bubble.cx = cx
+            bubble.cy = cy
         cy = 0
         for cx in range(GRID_WIDTH):
             color = random.choice(self.colors)
             x, y = get_center(cx, cy)
-            bubble = Bubble(x, y, 0, 0, color)
+            bubble = Bubble(x, y, 0, 0, color, cx, cy)
             self.bubbles.add(bubble)
 
     def create_next_bubble(self):
         assert self.state is Board.RELOAD
-        assert not self.next_bubble
+        assert not self.preview_bubble
         x, y = SCREEN_WIDTH // 2, SCREEN_HEIGHT - 30
         color = random.choice(self.colors)
-        self.next_bubble = Bubble(x, y, 0, 0, color)
-        self.bubbles.add(self.next_bubble)
+        self.preview_bubble = Bubble(x, y, 0, 0, color, -1, -1)
+        self.bubbles.add(self.preview_bubble)
         self.state = Board.READY
 
     def shoot_bubble(self):
-        if not self.next_bubble:
+        if not self.preview_bubble:
             return
         assert self.state is Board.READY
-        x, y = self.next_bubble.x, self.next_bubble.y
+        x, y = self.preview_bubble.x, self.preview_bubble.y
         mouse_x, mouse_y = pygame.mouse.get_pos()
         angle = math.atan2(mouse_y - y, mouse_x - x)
-        self.next_bubble.dx = math.cos(angle) * self.speed
-        self.next_bubble.dy = math.sin(angle) * self.speed
-        self.current_bubble = self.next_bubble
-        self.next_bubble = None
+        self.preview_bubble.dx = math.cos(angle) * self.speed
+        self.preview_bubble.dy = math.sin(angle) * self.speed
+        self.current_bubble = self.preview_bubble
+        self.preview_bubble = None
         self.state = Board.SHOOT
 
     def update_colors(self):
@@ -192,8 +200,15 @@ class Board:
         self.colors = list(updated_colors)
 
     def init(self):
+        self.step = 0
+        self.tries = -1
+        self.refresh_tries()
+        self.game_over = False
+        self.win = False
         self.state = Board.RELOAD
         self.colors = colors
+        for bubble in list(self.bubbles):
+            bubble.kill()
         for _ in range(INIT_HEIGHT):
             self.advance()
 
@@ -238,6 +253,7 @@ class Board:
                 continue
             occupied.add((bubble.x, bubble.y))
 
+        closest_cell = None
         closest_coordinates = None
         closest_distance = None
         for cy in range(GRID_HEIGHT):
@@ -249,8 +265,10 @@ class Board:
                 if not closest_distance or closest_distance > distance:
                     closest_coordinates = (x, y)
                     closest_distance = distance
+                    closest_cell = (cx, cy)
         assert closest_distance, occupied
         self.current_bubble.x, self.current_bubble.y = closest_coordinates
+        self.current_bubble.cx, self.current_bubble.cy = closest_cell
         self.current_bubble.dx = 0
         self.current_bubble.dy = 0
         self.current_bubble = None
@@ -377,18 +395,43 @@ class Board:
         if self.state is Board.RELOAD:
             # New game
             if len(self.bubbles) == 0:
-                self.init()
+                self.game_over = True
+                self.win = True
             else:
                 self.update_colors()
                 self.create_next_bubble()
         if self.state is Board.REMOVING_BUBBLES:
             self.check_removing_bubbles()
 
+    def start_shimmer(self, start_cell=(0, 0), same_color=False):
+        grid_bubbles = self.build_grid()
+        cells = [(start_cell, 0)]
+        seen = set()
+        while cells:
+            cell, depth = cells.pop(0)
+            seen.add(cell)
+            bubble = grid_bubbles.get(cell)
+            if bubble:
+                bubble.start_shimmer(depth*5)
+            for next_cell in neigbour_cells(cell):
+                if next_cell in seen:
+                    continue
+                seen.add(next_cell)
+                if same_color:
+                    next_bubble = grid_bubbles.get(next_cell)
+                    if not next_bubble:
+                        continue
+                    if not bubble or next_bubble.color != bubble.color:
+                        continue
+                cells.append((next_cell, depth+1))
+
 
 
 class Bubble(pygame.sprite.Sprite):
     MAX_ENERGY = 10
-    def __init__(self, x, y, dx, dy, color):
+    SHIMMER_MAX = 127
+    SHIMMER_STEP = 5
+    def __init__(self, x, y, dx, dy, color, cx, cy):
         super().__init__()
         self.color = color
         self.image = load_bubble_image(color)
@@ -397,7 +440,15 @@ class Bubble(pygame.sprite.Sprite):
         self.dy = dy
         self.x = x
         self.y = y
+        self.cx = cx
+        self.cy = cy
         self.energy = Bubble.MAX_ENERGY
+        self.shimmer = 0
+        self.shimmer_direction = -Bubble.SHIMMER_STEP
+        self.shimmer_start_count = None
+
+    def start_shimmer(self, after_ticks=0):
+        self.shimmer_start_count = after_ticks
 
     def update(self, mouse_pos):
         self.x = 1.0*self.x + self.dx
@@ -408,10 +459,22 @@ class Bubble(pygame.sprite.Sprite):
             self.dx = -self.dx
         if self.rect.top <= 0:
             self.dy = -self.dy
-        if self.rect.collidepoint(mouse_pos):
-            self.image.set_alpha(128)
-        else:
-            self.image.set_alpha(255)
+
+        self.shimmer += self.shimmer_direction
+        if self.shimmer < 0:
+            self.shimmer = 0
+        if self.shimmer >= Bubble.SHIMMER_MAX:
+            self.shimmer = Bubble.SHIMMER_MAX
+            self.shimmer_direction = -Bubble.SHIMMER_STEP
+        if self.rect.collidepoint(mouse_pos) and not self.shimmer:
+            board.start_shimmer(start_cell=(self.cx, self.cy), same_color=True)
+        if self.shimmer_start_count is not None:
+            if self.shimmer_start_count <= 0:
+                self.shimmer_start_count = None
+                self.shimmer_direction = Bubble.SHIMMER_STEP
+            else:
+                self.shimmer_start_count -= 1
+        self.image.set_alpha(255 - self.shimmer)
 
     def blow_step(self):
         self.energy -= 1
@@ -428,6 +491,7 @@ board.init()
 force_refresh = False
 last_changed_time = time.time()
 last_pos = None
+board.start_shimmer()
 while running:
     mouse_pos = pygame.mouse.get_pos()
     if mouse_pos != last_pos:
@@ -440,11 +504,19 @@ while running:
             if event.button == pygame.BUTTON_LEFT:
                 board.shoot_bubble()
             if event.button == pygame.BUTTON_RIGHT:
-                board.advance()
+                board.start_shimmer()
                 force_refresh = True
+
+    # Check game over
+    if board.game_over:
+        board.init()
+        board.start_shimmer()
 
     if board.state != Board.READY or force_refresh or last_changed_time > time.time() - 20.0:
         force_refresh = False
+
+        if not int(random.random()*100000):
+            board.start_shimmer()
 
         # Update game state
         board.bubbles.update(mouse_pos)

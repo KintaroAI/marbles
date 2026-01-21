@@ -7,8 +7,14 @@ import random
 pygame.init()
 
 # Constants
-SCREEN_WIDTH, SCREEN_HEIGHT = 800, 600
 BUBBLE_SIZE = 40
+BUBBLE_SPACE = 10
+GRID_WIDTH = 17
+GRID_HEIGHT = 15
+INIT_HEIGHT = 9
+
+SCREEN_WIDTH = (BUBBLE_SIZE + BUBBLE_SPACE // 2) * GRID_WIDTH - BUBBLE_SPACE // 2
+SCREEN_HEIGHT = (BUBBLE_SIZE + BUBBLE_SPACE // 2) * GRID_HEIGHT - BUBBLE_SPACE // 2
 
 # Colors
 WHITE = (255, 255, 255)
@@ -28,9 +34,89 @@ def load_bubble_image(color):
 # Bubble colors
 colors = [WHITE, (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)]
 
+class Board:
+    def __init__(self):
+        self.next_bubble = None
+        self.current_bubble = None
+        # Group for all bubbles
+        self.bubbles = pygame.sprite.Group()
+        # Speed modifier
+        self.speed = 1  # Default speed
+        self.colors = colors
+
+
+    def create_next_bubble(self):
+        assert not self.next_bubble
+        x, y = SCREEN_WIDTH // 2, SCREEN_HEIGHT - 30
+        color = random.choice(self.colors)
+        self.next_bubble= Bubble(x, y, 0, 0, color)
+        self.bubbles.add(self.next_bubble)
+
+    def shoot_bubble(self):
+        if not self.next_bubble:
+            return
+        x, y = self.next_bubble.x, self.next_bubble.y
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        angle = math.atan2(mouse_y - y, mouse_x - x)
+        self.next_bubble.dx = math.cos(angle) * self.speed
+        self.next_bubble.dy = math.sin(angle) * self.speed
+        self.current_bubble = self.next_bubble
+        self.next_bubble = None
+
+    def update_colors(self):
+        updated_colors = set()
+        for bubble in self.bubbles:
+            updated_colors.add(bubble.color)
+        self.colors = list(updated_colors)
+
+    def init(self):
+        self.colors = colors
+        if not self.next_bubble:
+            self.create_next_bubble()
+        for y in range(INIT_HEIGHT):
+            for x in range(GRID_WIDTH):
+                color = random.choice(self.colors)
+                bubble = Bubble(
+                    x * (BUBBLE_SIZE + BUBBLE_SPACE//2),
+                    y * (BUBBLE_SIZE + BUBBLE_SPACE//2),
+                    0,
+                    0,
+                    color)
+                self.bubbles.add(bubble)
+
+    def check_collisions(self):
+        if not self.current_bubble:
+            return
+        bubble = self.current_bubble
+        # Check for collision with other bubbles
+        # The first False is for not killing the bubble being checked; the second is to use the collide_circle method
+        collided_bubbles = pygame.sprite.spritecollide(bubble, self.bubbles, False, pygame.sprite.collide_circle)
+        if len(collided_bubbles) > 1:  # It always finds itself, so more than 1 means it hit another bubble
+            self.handle_collision(collided_bubbles)
+
+    def handle_collision(self, collided_bubbles):
+        # Simple collision handling: remove the bubble or add other logic
+        for hit in collided_bubbles:
+            if hit != self.current_bubble:  # Avoid killing the bubble itself
+                if hit.color == self.current_bubble.color:
+                    hit.kill()  # Remove the collided bubble
+
+    def check_state(self):
+        # Current bubble become part of the board or destroyed
+        if self.current_bubble is None and self.next_bubble is None:
+            # New game
+            if len(self.bubbles) == 0:
+                self.init()
+            else:
+                self.update_colors()
+                self.create_next_bubble()
+
+
+
 class Bubble(pygame.sprite.Sprite):
     def __init__(self, x, y, dx, dy, color):
         super().__init__()
+        self.color = color
         self.image = load_bubble_image(color)
         self.rect = self.image.get_rect(center=(x, y))
         self.dx = dx
@@ -39,7 +125,6 @@ class Bubble(pygame.sprite.Sprite):
         self.y = y
 
     def update(self):
-        print('ok')
         self.x = 1.0*self.x + self.dx
         self.y = 1.0*self.y + self.dy
         self.rect.x = self.x
@@ -49,39 +134,35 @@ class Bubble(pygame.sprite.Sprite):
         if self.rect.top <= 0:
             self.dy = -self.dy
         if self.rect.bottom >= SCREEN_HEIGHT + BUBBLE_SIZE:
+            if self is board.current_bubble:
+                board.current_bubble = None
             self.kill()  # This removes the Sprite from all Groups it belongs to
 
-# Group for all bubbles
-bubbles = pygame.sprite.Group()
 
-# Speed modifier
-speed = 1  # Default speed
 
-def shoot_bubble():
-    mouse_x, mouse_y = pygame.mouse.get_pos()
-    x, y = SCREEN_WIDTH // 2, SCREEN_HEIGHT - 30
-    angle = math.atan2(mouse_y - y, mouse_x - x)
-    dx = math.cos(angle) * speed
-    dy = math.sin(angle) * speed
-    color = random.choice(colors)
-    bubble = Bubble(x, y, dx, dy, color)
-    bubbles.add(bubble)
+
 
 # Main game loop
 running = True
+board = Board()
+board.init()
 while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
         if event.type == pygame.MOUSEBUTTONDOWN:
-            shoot_bubble()
+            board.shoot_bubble()
 
     # Update game state
-    bubbles.update()
+    board.bubbles.update()
+
+    board.check_collisions()
+
+    board.check_state()
 
     # Draw everything
     screen.fill(BLACK)
-    bubbles.draw(screen)
+    board.bubbles.draw(screen)
     pygame.display.flip()
 
 pygame.quit()

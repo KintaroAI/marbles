@@ -194,10 +194,10 @@ def apply_gravity():
 - [x] Animate block removal (fade out / shrink - reuse it from draw.py)
 
 ### Phase 4: Gravity & Refill
-- [ ] Implement gravity (blocks fall down)
-- [ ] Animate falling blocks
-- [ ] Spawn new blocks at top
-- [ ] Animate new blocks falling in
+- [x] Implement gravity (blocks fall down)
+- [x] Animate falling blocks
+- [x] Spawn new blocks at top
+- [x] Animate new blocks falling in
 
 ### Phase 5: Game Loop & Polish
 - [ ] Implement cascade detection (chain reactions)

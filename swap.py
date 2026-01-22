@@ -80,6 +80,7 @@ def get_cell_from_pos(pos):
 class Block(pygame.sprite.Sprite):
     """A single colored block on the grid"""
     SWAP_SPEED = 8  # pixels per frame
+    FALL_SPEED = 12  # pixels per frame for falling
     REMOVE_SPEED = 3  # shrink speed per frame
     
     def __init__(self, color, cx, cy):
@@ -95,6 +96,7 @@ class Block(pygame.sprite.Sprite):
         self.rect = self.image.get_rect(center=(self.x, self.y))
         self.selected = False
         self.swapping = False
+        self.falling = False
         self.removing = False
         self.scale = 1.0  # For shrink animation
     
@@ -115,7 +117,7 @@ class Block(pygame.sprite.Sprite):
     
     def update(self):
         """Update block state and handle animations"""
-        # Smooth movement towards target
+        # Smooth movement towards target (swapping)
         if self.swapping:
             dx = self.target_x - self.x
             dy = self.target_y - self.y
@@ -130,6 +132,18 @@ class Block(pygame.sprite.Sprite):
                 # Move towards target
                 self.x += dx / distance * Block.SWAP_SPEED
                 self.y += dy / distance * Block.SWAP_SPEED
+        
+        # Falling animation
+        if self.falling:
+            dy = self.target_y - self.y
+            
+            if abs(dy) < Block.FALL_SPEED:
+                # Arrived at target
+                self.y = self.target_y
+                self.falling = False
+            else:
+                # Fall down
+                self.y += Block.FALL_SPEED if dy > 0 else -Block.FALL_SPEED
         
         # Shrink animation for removal
         if self.removing:
@@ -151,9 +165,14 @@ class Block(pygame.sprite.Sprite):
         """Start the removal animation"""
         self.removing = True
     
+    def start_falling(self, target_y):
+        """Start falling animation to target y position"""
+        self.target_y = target_y
+        self.falling = True
+    
     def is_animating(self):
         """Check if block is currently animating"""
-        return self.swapping or self.removing
+        return self.swapping or self.falling or self.removing
     
     def draw_selected(self, surface):
         """Draw selection highlight around block"""
@@ -175,6 +194,7 @@ class Board:
     SWAPPING = 'SWAPPING'
     CHECKING = 'CHECKING'
     REMOVING = 'REMOVING'
+    FALLING = 'FALLING'
     
     def __init__(self):
         self.blocks = pygame.sprite.Group()
@@ -183,6 +203,7 @@ class Board:
         self.state = Board.IDLE
         self.swapping_blocks = []  # Blocks currently being swapped
         self.removing_blocks = []  # Blocks being removed
+        self.falling_blocks = []   # Blocks currently falling
         self.last_swapped = []  # Track last swapped blocks for invalid swap reversal
     
     def init(self):
@@ -195,6 +216,7 @@ class Board:
         self.state = Board.IDLE
         self.swapping_blocks = []
         self.removing_blocks = []
+        self.falling_blocks = []
         self.last_swapped = []
         
         # Fill grid with random blocks
@@ -367,7 +389,84 @@ class Board:
         
         if all_done:
             self.removing_blocks = []
-            self.state = Board.IDLE
+            self.state = Board.FALLING
+    
+    def apply_gravity_and_refill(self):
+        """
+        Make blocks fall down to fill empty spaces, one step at a time.
+        - Start from bottom row, check for empty cells
+        - If empty, pull block from cell above
+        - If top cell is empty, spawn new random block
+        - Repeat until no empty cells
+        """
+        self.falling_blocks = []
+        
+        # Process each column
+        for cx in range(GRID_WIDTH):
+            # Start from bottom row, go up
+            for cy in range(GRID_HEIGHT - 1, -1, -1):
+                if self.grid.get((cx, cy)) is None:
+                    # Empty cell - try to pull block from above
+                    if cy > 0:
+                        # Look for a block above
+                        above_block = self.grid.get((cx, cy - 1))
+                        if above_block:
+                            # Pull block down
+                            self.grid[(cx, cy - 1)] = None
+                            self.grid[(cx, cy)] = above_block
+                            above_block.cy = cy
+                            target_x, target_y = get_center(cx, cy)
+                            above_block.target_x = target_x
+                            above_block.start_falling(target_y)
+                            self.falling_blocks.append(above_block)
+                    
+                    # If this is the top row (cy == 0) and it's empty, spawn new block
+                    if cy == 0 and self.grid.get((cx, 0)) is None:
+                        color = random.choice(colors)
+                        # Create block above the grid
+                        block = Block(color, cx, -1)
+                        start_x, start_y = get_center(cx, -1)
+                        block.x = start_x
+                        block.y = start_y
+                        # Set target to top row
+                        block.cx = cx
+                        block.cy = 0
+                        target_x, target_y = get_center(cx, 0)
+                        block.target_x = target_x
+                        block.start_falling(target_y)
+                        
+                        self.blocks.add(block)
+                        self.grid[(cx, 0)] = block
+                        self.falling_blocks.append(block)
+    
+    def has_empty_cells(self):
+        """Check if there are any empty cells in the grid"""
+        for cy in range(GRID_HEIGHT):
+            for cx in range(GRID_WIDTH):
+                if self.grid.get((cx, cy)) is None:
+                    return True
+        return False
+    
+    def check_falling_complete(self):
+        """Check if all falling animations are complete"""
+        if self.state != Board.FALLING:
+            return
+        
+        # If no blocks are falling, nothing to check
+        if not self.falling_blocks:
+            return
+        
+        # Check if all falling blocks have finished animating
+        all_done = all(not block.is_animating() for block in self.falling_blocks)
+        
+        if all_done:
+            self.falling_blocks = []
+            # Check if there are still empty cells - if so, continue falling
+            if self.has_empty_cells():
+                self.apply_gravity_and_refill()
+            else:
+                # All filled, check for new matches (cascades)
+                self.state = Board.CHECKING
     
     def swap_back(self):
         """Swap back the last swapped blocks (invalid move)"""
@@ -401,6 +500,14 @@ class Board:
                     self.swap_back()
                 else:
                     self.state = Board.IDLE
+        
+        elif self.state == Board.FALLING:
+            # Only start gravity if no blocks are currently falling
+            if not self.falling_blocks:
+                self.apply_gravity_and_refill()
+                if not self.falling_blocks:
+                    # No blocks moved, check for cascades
+                    self.state = Board.CHECKING
     
     def draw(self, surface):
         """Draw all blocks and selection highlight"""
@@ -414,6 +521,7 @@ class Board:
         self.blocks.update()
         self.check_swap_complete()
         self.check_removing_complete()
+        self.check_falling_complete()
         self.check_state()
 
 

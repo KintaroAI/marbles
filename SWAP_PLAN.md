@@ -183,15 +183,15 @@ def apply_gravity():
 - [x] Create grid and display blocks
 
 ### Phase 2: Selection & Swapping
-- [ ] Implement click detection to select blocks
-- [ ] Highlight selected block
-- [ ] Implement adjacent check
-- [ ] Animate swap between two blocks
+- [x] Implement click detection to select blocks
+- [x] Highlight selected block
+- [x] Implement adjacent check
+- [x] Animate swap between two blocks
 
 ### Phase 3: Match Detection
 - [ ] Implement horizontal match detection
 - [ ] Implement vertical match detection
-- [ ] Animate block removal (fade out / shrink)
+- [ ] Animate block removal (fade out / shrink - reuse it from draw.py)
 
 ### Phase 4: Gravity & Refill
 - [ ] Implement gravity (blocks fall down)

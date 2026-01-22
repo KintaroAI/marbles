@@ -79,6 +79,7 @@ def get_cell_from_pos(pos):
 
 class Block(pygame.sprite.Sprite):
     """A single colored block on the grid"""
+    SWAP_SPEED = 8  # pixels per frame
     
     def __init__(self, color, cx, cy):
         super().__init__()
@@ -86,20 +87,51 @@ class Block(pygame.sprite.Sprite):
         self.cx = cx
         self.cy = cy
         self.x, self.y = get_center(cx, cy)
+        self.target_x = self.x
+        self.target_y = self.y
         self.image = load_block_image(color)
         self.rect = self.image.get_rect(center=(self.x, self.y))
         self.selected = False
+        self.swapping = False
     
     def set_cell_pos(self, cx, cy):
         """Update grid position"""
         self.cx = cx
         self.cy = cy
         self.x, self.y = get_center(cx, cy)
+        self.target_x = self.x
+        self.target_y = self.y
         self.rect.center = (self.x, self.y)
     
+    def animate_to(self, target_x, target_y):
+        """Start smooth animation to target position"""
+        self.target_x = target_x
+        self.target_y = target_y
+        self.swapping = True
+    
     def update(self):
-        """Update block state"""
-        self.rect.center = (self.x, self.y)
+        """Update block state and handle animations"""
+        # Smooth movement towards target
+        if self.swapping:
+            dx = self.target_x - self.x
+            dy = self.target_y - self.y
+            distance = (dx ** 2 + dy ** 2) ** 0.5
+            
+            if distance < Block.SWAP_SPEED:
+                # Arrived at target
+                self.x = self.target_x
+                self.y = self.target_y
+                self.swapping = False
+            else:
+                # Move towards target
+                self.x += dx / distance * Block.SWAP_SPEED
+                self.y += dy / distance * Block.SWAP_SPEED
+        
+        self.rect.center = (int(self.x), int(self.y))
+    
+    def is_animating(self):
+        """Check if block is currently animating"""
+        return self.swapping
     
     def draw_selected(self, surface):
         """Draw selection highlight around block"""
@@ -116,10 +148,16 @@ class Block(pygame.sprite.Sprite):
 class Board:
     """Game board managing the grid of blocks"""
     
+    # States
+    IDLE = 'IDLE'
+    SWAPPING = 'SWAPPING'
+    
     def __init__(self):
         self.blocks = pygame.sprite.Group()
         self.grid = {}  # (cx, cy) -> Block
         self.selected_block = None
+        self.state = Board.IDLE
+        self.swapping_blocks = []  # Blocks currently being swapped
     
     def init(self):
         """Initialize the board with random blocks"""
@@ -128,6 +166,8 @@ class Board:
             block.kill()
         self.grid = {}
         self.selected_block = None
+        self.state = Board.IDLE
+        self.swapping_blocks = []
         
         # Fill grid with random blocks
         for cy in range(GRID_HEIGHT):
@@ -141,6 +181,94 @@ class Board:
         """Get block at grid position"""
         return self.grid.get((cx, cy))
     
+    def is_adjacent(self, block1, block2):
+        """Check if two blocks are adjacent (horizontally or vertically)"""
+        dx = abs(block1.cx - block2.cx)
+        dy = abs(block1.cy - block2.cy)
+        # Adjacent means exactly one cell apart in one direction only
+        return (dx == 1 and dy == 0) or (dx == 0 and dy == 1)
+    
+    def swap(self, block1, block2):
+        """Initiate swap animation between two blocks"""
+        if self.state != Board.IDLE:
+            return
+        
+        self.state = Board.SWAPPING
+        self.swapping_blocks = [block1, block2]
+        
+        # Animate blocks to each other's positions
+        block1.animate_to(block2.x, block2.y)
+        block2.animate_to(block1.x, block1.y)
+        
+        # Swap grid positions
+        block1.cx, block2.cx = block2.cx, block1.cx
+        block1.cy, block2.cy = block2.cy, block1.cy
+        self.grid[(block1.cx, block1.cy)] = block1
+        self.grid[(block2.cx, block2.cy)] = block2
+        
+        # Clear selection
+        if self.selected_block:
+            self.selected_block.selected = False
+            self.selected_block = None
+    
+    def on_click(self, pos):
+        """Handle click at pixel position"""
+        if self.state != Board.IDLE:
+            return
+        
+        cell = get_cell_from_pos(pos)
+        if cell is None:
+            # Clicked outside grid - deselect
+            if self.selected_block:
+                self.selected_block.selected = False
+                self.selected_block = None
+            return
+        
+        cx, cy = cell
+        clicked_block = self.get_block_at(cx, cy)
+        
+        if clicked_block is None:
+            return
+        
+        if self.selected_block is None:
+            # First selection
+            self.selected_block = clicked_block
+            clicked_block.selected = True
+        elif clicked_block == self.selected_block:
+            # Clicked same block - deselect
+            self.selected_block.selected = False
+            self.selected_block = None
+        elif self.is_adjacent(self.selected_block, clicked_block):
+            # Swap adjacent blocks
+            self.selected_block.selected = False
+            self.swap(self.selected_block, clicked_block)
+        else:
+            # Select new block
+            self.selected_block.selected = False
+            self.selected_block = clicked_block
+            clicked_block.selected = True
+    
+    def on_right_click(self):
+        """Handle right click - cancel selection"""
+        if self.selected_block:
+            self.selected_block.selected = False
+            self.selected_block = None
+    
+    def check_swap_complete(self):
+        """Check if swap animation is complete"""
+        if self.state != Board.SWAPPING:
+            return
+        
+        # Check if all swapping blocks have finished animating
+        all_done = all(not block.is_animating() for block in self.swapping_blocks)
+        
+        if all_done:
+            # Update target positions to match grid
+            for block in self.swapping_blocks:
+                block.target_x, block.target_y = get_center(block.cx, block.cy)
+            self.swapping_blocks = []
+            self.state = Board.IDLE
+    
     def draw(self, surface):
         """Draw all blocks and selection highlight"""
         self.blocks.draw(surface)
@@ -151,6 +279,7 @@ class Board:
     def update(self):
         """Update all blocks"""
         self.blocks.update()
+        self.check_swap_complete()
 
 
 # Create board
@@ -164,6 +293,11 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == pygame.BUTTON_LEFT:
+                board.on_click(event.pos)
+            elif event.button == pygame.BUTTON_RIGHT:
+                board.on_right_click()
     
     clock.tick(fps)
     

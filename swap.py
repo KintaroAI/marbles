@@ -232,6 +232,7 @@ class Board:
         self.removing_blocks = []  # Blocks being removed
         self.falling_blocks = []   # Blocks currently falling
         self.last_swapped = []  # Track last swapped blocks for invalid swap reversal
+        self.is_swap_back = False  # Flag to track if current swap is a reversal
         self.score = 0
         self.combo = 0  # Chain combo multiplier
     
@@ -247,6 +248,7 @@ class Board:
         self.removing_blocks = []
         self.falling_blocks = []
         self.last_swapped = []
+        self.is_swap_back = False
         self.score = 0
         self.combo = 0
         
@@ -371,9 +373,17 @@ class Board:
             # Update target positions to match grid
             for block in self.swapping_blocks:
                 block.target_x, block.target_y = get_center(block.cx, block.cy)
-            self.last_swapped = self.swapping_blocks[:]
-            self.swapping_blocks = []
-            self.state = Board.CHECKING
+            
+            if self.is_swap_back:
+                # Swap back completed, go to idle
+                self.is_swap_back = False
+                self.swapping_blocks = []
+                self.state = Board.IDLE
+            else:
+                # Normal swap, check for matches
+                self.last_swapped = self.swapping_blocks[:]
+                self.swapping_blocks = []
+                self.state = Board.CHECKING
     
     def find_matches(self):
         """Find all matching blocks (3+ in a row horizontally or vertically)"""
@@ -535,6 +545,7 @@ class Board:
             block1, block2 = self.last_swapped
             self.state = Board.SWAPPING
             self.swapping_blocks = [block1, block2]
+            self.is_swap_back = True  # Mark this as a swap-back operation
             
             # Animate blocks back to original positions
             block1.animate_to(block2.x, block2.y)

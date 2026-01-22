@@ -200,11 +200,11 @@ def apply_gravity():
 - [x] Animate new blocks falling in
 
 ### Phase 5: Game Loop & Polish
-- [ ] Implement cascade detection (chain reactions)
-- [ ] Add invalid swap animation (swap back)
-- [ ] Add score counter
-- [ ] Ensure no initial matches on board setup
-- [ ] Add shimmer/hover effects (reuse from bubbles)
+- [x] Implement cascade detection (chain reactions)
+- [x] Add invalid swap animation (swap back)
+- [x] Add score counter
+- [x] Ensure no initial matches on board setup
+- [x] Add shimmer/hover effects (reuse from bubbles)
 
 ---
 

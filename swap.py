@@ -82,6 +82,8 @@ class Block(pygame.sprite.Sprite):
     SWAP_SPEED = 8  # pixels per frame
     FALL_SPEED = 12  # pixels per frame for falling
     REMOVE_SPEED = 3  # shrink speed per frame
+    SHIMMER_MAX = 80
+    SHIMMER_STEP = 4
     
     def __init__(self, color, cx, cy):
         super().__init__()
@@ -99,6 +101,9 @@ class Block(pygame.sprite.Sprite):
         self.falling = False
         self.removing = False
         self.scale = 1.0  # For shrink animation
+        self.shimmer = 0
+        self.shimmer_direction = 0
+        self.hovered = False
     
     def set_cell_pos(self, cx, cy):
         """Update grid position"""
@@ -115,7 +120,7 @@ class Block(pygame.sprite.Sprite):
         self.target_y = target_y
         self.swapping = True
     
-    def update(self):
+    def update(self, mouse_pos=None):
         """Update block state and handle animations"""
         # Smooth movement towards target (swapping)
         if self.swapping:
@@ -158,6 +163,28 @@ class Block(pygame.sprite.Sprite):
                 if new_size > 0:
                     self.image = pygame.transform.scale(self.base_image, (new_size, new_size))
                     self.rect = self.image.get_rect(center=(int(self.x), int(self.y)))
+        
+        # Shimmer effect
+        if self.shimmer_direction != 0:
+            self.shimmer += self.shimmer_direction
+            if self.shimmer >= Block.SHIMMER_MAX:
+                self.shimmer = Block.SHIMMER_MAX
+                self.shimmer_direction = -Block.SHIMMER_STEP
+            elif self.shimmer <= 0:
+                self.shimmer = 0
+                self.shimmer_direction = 0
+        
+        # Check hover
+        if mouse_pos and not self.removing:
+            was_hovered = self.hovered
+            self.hovered = self.rect.collidepoint(mouse_pos)
+            if self.hovered and not was_hovered and self.shimmer_direction == 0:
+                self.shimmer_direction = Block.SHIMMER_STEP
+        
+        # Apply shimmer alpha
+        if not self.removing and self.shimmer > 0:
+            self.image = self.base_image.copy()
+            self.image.set_alpha(255 - self.shimmer)
         
         self.rect.center = (int(self.x), int(self.y))
     
@@ -205,6 +232,8 @@ class Board:
         self.removing_blocks = []  # Blocks being removed
         self.falling_blocks = []   # Blocks currently falling
         self.last_swapped = []  # Track last swapped blocks for invalid swap reversal
+        self.score = 0
+        self.combo = 0  # Chain combo multiplier
     
     def init(self):
         """Initialize the board with random blocks"""
@@ -218,14 +247,40 @@ class Board:
         self.removing_blocks = []
         self.falling_blocks = []
         self.last_swapped = []
+        self.score = 0
+        self.combo = 0
         
-        # Fill grid with random blocks
+        # Fill grid with random blocks, avoiding initial matches
         for cy in range(GRID_HEIGHT):
             for cx in range(GRID_WIDTH):
-                color = random.choice(colors)
+                color = self.get_safe_color(cx, cy)
                 block = Block(color, cx, cy)
                 self.blocks.add(block)
                 self.grid[(cx, cy)] = block
+    
+    def get_safe_color(self, cx, cy):
+        """Get a color that won't create a match at (cx, cy)"""
+        forbidden = set()
+        
+        # Check horizontal - if two blocks to the left have same color, forbid it
+        if cx >= 2:
+            left1 = self.grid.get((cx - 1, cy))
+            left2 = self.grid.get((cx - 2, cy))
+            if left1 and left2 and left1.color == left2.color:
+                forbidden.add(left1.color)
+        
+        # Check vertical - if two blocks above have same color, forbid it
+        if cy >= 2:
+            up1 = self.grid.get((cx, cy - 1))
+            up2 = self.grid.get((cx, cy - 2))
+            if up1 and up2 and up1.color == up2.color:
+                forbidden.add(up1.color)
+        
+        # Choose from allowed colors
+        allowed = [c for c in colors if c not in forbidden]
+        if not allowed:
+            allowed = colors  # Fallback if all forbidden (shouldn't happen)
+        return random.choice(allowed)
     
     def get_block_at(self, cx, cy):
         """Get block at grid position"""
@@ -377,6 +432,12 @@ class Board:
                 block.start_removal()
                 self.removing_blocks.append(block)
                 self.grid[(cx, cy)] = None
+        
+        # Update score with combo multiplier
+        self.combo += 1
+        points = len(matches) * 10 * self.combo
+        self.score += points
+        
         self.state = Board.REMOVING
     
     def check_removing_complete(self):
@@ -499,6 +560,8 @@ class Board:
                 if self.last_swapped:
                     self.swap_back()
                 else:
+                    # Reset combo when chain ends
+                    self.combo = 0
                     self.state = Board.IDLE
         
         elif self.state == Board.FALLING:
@@ -516,14 +579,19 @@ class Board:
         if self.selected_block:
             self.selected_block.draw_selected(surface)
     
-    def update(self):
+    def update(self, mouse_pos=None):
         """Update all blocks"""
-        self.blocks.update()
+        for block in self.blocks:
+            block.update(mouse_pos)
         self.check_swap_complete()
         self.check_removing_complete()
         self.check_falling_complete()
         self.check_state()
 
+
+# Fonts
+score_font = pygame.font.Font(None, 48)
+combo_font = pygame.font.Font(None, 36)
 
 # Create board
 board = Board()
@@ -533,6 +601,8 @@ board.init()
 running = True
 
 while running:
+    mouse_pos = pygame.mouse.get_pos()
+    
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
@@ -541,15 +611,34 @@ while running:
                 board.on_click(event.pos)
             elif event.button == pygame.BUTTON_RIGHT:
                 board.on_right_click()
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_r:
+                # Reset game
+                board.init()
     
     clock.tick(fps)
     
     # Update
-    board.update()
+    board.update(mouse_pos)
     
     # Draw
     screen.fill(BACKGROUND)
     board.draw(screen)
+    
+    # Draw score
+    score_y = GRID_HEIGHT * (BLOCK_SIZE + BLOCK_SPACE) + BLOCK_SPACE + 20
+    score_text = score_font.render(f"Score: {board.score}", True, (50, 50, 100))
+    screen.blit(score_text, (20, score_y))
+    
+    # Draw combo indicator
+    if board.combo > 1:
+        combo_text = combo_font.render(f"Combo x{board.combo}!", True, (200, 50, 50))
+        screen.blit(combo_text, (20, score_y + 40))
+    
+    # Draw state (for debugging, can be removed)
+    # state_text = combo_font.render(f"State: {board.state}", True, (100, 100, 100))
+    # screen.blit(state_text, (SCREEN_WIDTH - 200, score_y))
+    
     pygame.display.flip()
 
 pygame.quit()

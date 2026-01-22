@@ -80,6 +80,7 @@ def get_cell_from_pos(pos):
 class Block(pygame.sprite.Sprite):
     """A single colored block on the grid"""
     SWAP_SPEED = 8  # pixels per frame
+    REMOVE_SPEED = 3  # shrink speed per frame
     
     def __init__(self, color, cx, cy):
         super().__init__()
@@ -89,10 +90,13 @@ class Block(pygame.sprite.Sprite):
         self.x, self.y = get_center(cx, cy)
         self.target_x = self.x
         self.target_y = self.y
-        self.image = load_block_image(color)
+        self.base_image = load_block_image(color)
+        self.image = self.base_image.copy()
         self.rect = self.image.get_rect(center=(self.x, self.y))
         self.selected = False
         self.swapping = False
+        self.removing = False
+        self.scale = 1.0  # For shrink animation
     
     def set_cell_pos(self, cx, cy):
         """Update grid position"""
@@ -127,11 +131,29 @@ class Block(pygame.sprite.Sprite):
                 self.x += dx / distance * Block.SWAP_SPEED
                 self.y += dy / distance * Block.SWAP_SPEED
         
+        # Shrink animation for removal
+        if self.removing:
+            self.scale -= 0.08
+            if self.scale <= 0:
+                self.scale = 0
+                self.removing = False
+                self.kill()
+            else:
+                # Scale down the image
+                new_size = int(BLOCK_SIZE * self.scale)
+                if new_size > 0:
+                    self.image = pygame.transform.scale(self.base_image, (new_size, new_size))
+                    self.rect = self.image.get_rect(center=(int(self.x), int(self.y)))
+        
         self.rect.center = (int(self.x), int(self.y))
+    
+    def start_removal(self):
+        """Start the removal animation"""
+        self.removing = True
     
     def is_animating(self):
         """Check if block is currently animating"""
-        return self.swapping
+        return self.swapping or self.removing
     
     def draw_selected(self, surface):
         """Draw selection highlight around block"""
@@ -151,6 +173,8 @@ class Board:
     # States
     IDLE = 'IDLE'
     SWAPPING = 'SWAPPING'
+    CHECKING = 'CHECKING'
+    REMOVING = 'REMOVING'
     
     def __init__(self):
         self.blocks = pygame.sprite.Group()
@@ -158,6 +182,8 @@ class Board:
         self.selected_block = None
         self.state = Board.IDLE
         self.swapping_blocks = []  # Blocks currently being swapped
+        self.removing_blocks = []  # Blocks being removed
+        self.last_swapped = []  # Track last swapped blocks for invalid swap reversal
     
     def init(self):
         """Initialize the board with random blocks"""
@@ -168,6 +194,8 @@ class Board:
         self.selected_block = None
         self.state = Board.IDLE
         self.swapping_blocks = []
+        self.removing_blocks = []
+        self.last_swapped = []
         
         # Fill grid with random blocks
         for cy in range(GRID_HEIGHT):
@@ -266,8 +294,113 @@ class Board:
             # Update target positions to match grid
             for block in self.swapping_blocks:
                 block.target_x, block.target_y = get_center(block.cx, block.cy)
+            self.last_swapped = self.swapping_blocks[:]
             self.swapping_blocks = []
+            self.state = Board.CHECKING
+    
+    def find_matches(self):
+        """Find all matching blocks (3+ in a row horizontally or vertically)"""
+        matches = set()
+        
+        # Check horizontal matches
+        for cy in range(GRID_HEIGHT):
+            run_start = 0
+            run_color = None
+            for cx in range(GRID_WIDTH + 1):
+                block = self.grid.get((cx, cy))
+                current_color = block.color if block else None
+                
+                if current_color == run_color and current_color is not None:
+                    # Continue the run
+                    pass
+                else:
+                    # End of run - check if it's a match (3+)
+                    run_length = cx - run_start
+                    if run_length >= 3 and run_color is not None:
+                        for x in range(run_start, cx):
+                            matches.add((x, cy))
+                    # Start new run
+                    run_start = cx
+                    run_color = current_color
+        
+        # Check vertical matches
+        for cx in range(GRID_WIDTH):
+            run_start = 0
+            run_color = None
+            for cy in range(GRID_HEIGHT + 1):
+                block = self.grid.get((cx, cy))
+                current_color = block.color if block else None
+                
+                if current_color == run_color and current_color is not None:
+                    # Continue the run
+                    pass
+                else:
+                    # End of run - check if it's a match (3+)
+                    run_length = cy - run_start
+                    if run_length >= 3 and run_color is not None:
+                        for y in range(run_start, cy):
+                            matches.add((cx, y))
+                    # Start new run
+                    run_start = cy
+                    run_color = current_color
+        
+        return matches
+    
+    def remove_matches(self, matches):
+        """Start removal animation for matched blocks"""
+        self.removing_blocks = []
+        for cx, cy in matches:
+            block = self.grid.get((cx, cy))
+            if block:
+                block.start_removal()
+                self.removing_blocks.append(block)
+                self.grid[(cx, cy)] = None
+        self.state = Board.REMOVING
+    
+    def check_removing_complete(self):
+        """Check if all removal animations are complete"""
+        if self.state != Board.REMOVING:
+            return
+        
+        # Check if all removing blocks have finished animating
+        all_done = all(not block.is_animating() for block in self.removing_blocks)
+        
+        if all_done:
+            self.removing_blocks = []
             self.state = Board.IDLE
+    
+    def swap_back(self):
+        """Swap back the last swapped blocks (invalid move)"""
+        if len(self.last_swapped) == 2:
+            block1, block2 = self.last_swapped
+            self.state = Board.SWAPPING
+            self.swapping_blocks = [block1, block2]
+            
+            # Animate blocks back to original positions
+            block1.animate_to(block2.x, block2.y)
+            block2.animate_to(block1.x, block1.y)
+            
+            # Swap grid positions back
+            block1.cx, block2.cx = block2.cx, block1.cx
+            block1.cy, block2.cy = block2.cy, block1.cy
+            self.grid[(block1.cx, block1.cy)] = block1
+            self.grid[(block2.cx, block2.cy)] = block2
+            
+            self.last_swapped = []
+    
+    def check_state(self):
+        """Main state machine logic"""
+        if self.state == Board.CHECKING:
+            matches = self.find_matches()
+            if matches:
+                self.remove_matches(matches)
+                self.last_swapped = []  # Valid move, clear swap history
+            else:
+                # No matches - swap back if this was a player swap
+                if self.last_swapped:
+                    self.swap_back()
+                else:
+                    self.state = Board.IDLE
     
     def draw(self, surface):
         """Draw all blocks and selection highlight"""
@@ -280,6 +413,8 @@ class Board:
         """Update all blocks"""
         self.blocks.update()
         self.check_swap_complete()
+        self.check_removing_complete()
+        self.check_state()
 
 
 # Create board

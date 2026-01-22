@@ -189,9 +189,9 @@ def apply_gravity():
 - [x] Animate swap between two blocks
 
 ### Phase 3: Match Detection
-- [ ] Implement horizontal match detection
-- [ ] Implement vertical match detection
-- [ ] Animate block removal (fade out / shrink - reuse it from draw.py)
+- [x] Implement horizontal match detection
+- [x] Implement vertical match detection
+- [x] Animate block removal (fade out / shrink - reuse it from draw.py)
 
 ### Phase 4: Gravity & Refill
 - [ ] Implement gravity (blocks fall down)

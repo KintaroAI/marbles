@@ -236,6 +236,8 @@ class Board:
         self.score = 0
         self.combo = 0  # Chain combo multiplier
         self.color_bomb_active = False  # Color bomb power-up mode
+        self.row_bomb_active = False    # Row clear power-up mode
+        self.col_bomb_active = False    # Column clear power-up mode
     
     def init(self):
         """Initialize the board with random blocks"""
@@ -253,6 +255,8 @@ class Board:
         self.score = 0
         self.combo = 0
         self.color_bomb_active = False
+        self.row_bomb_active = False
+        self.col_bomb_active = False
         
         # Fill grid with random blocks, avoiding initial matches
         for cy in range(GRID_HEIGHT):
@@ -344,6 +348,16 @@ class Board:
             self.use_color_bomb(clicked_block.color)
             return
         
+        # Row bomb mode - remove entire horizontal row
+        if self.row_bomb_active:
+            self.use_row_bomb(cy)
+            return
+        
+        # Column bomb mode - remove entire vertical column
+        if self.col_bomb_active:
+            self.use_col_bomb(cx)
+            return
+        
         if self.selected_block is None:
             # First selection
             self.selected_block = clicked_block
@@ -380,21 +394,90 @@ class Board:
         if matches:
             self.remove_matches(matches)
     
+    def use_row_bomb(self, target_row):
+        """Remove all blocks in a horizontal row"""
+        self.row_bomb_active = False
+        
+        # Clear any selection
+        if self.selected_block:
+            self.selected_block.selected = False
+            self.selected_block = None
+        
+        # Find all blocks in the row
+        matches = set()
+        for cx in range(GRID_WIDTH):
+            if self.grid.get((cx, target_row)):
+                matches.add((cx, target_row))
+        
+        if matches:
+            self.remove_matches(matches)
+    
+    def use_col_bomb(self, target_col):
+        """Remove all blocks in a vertical column"""
+        self.col_bomb_active = False
+        
+        # Clear any selection
+        if self.selected_block:
+            self.selected_block.selected = False
+            self.selected_block = None
+        
+        # Find all blocks in the column
+        matches = set()
+        for cy in range(GRID_HEIGHT):
+            if self.grid.get((target_col, cy)):
+                matches.add((target_col, cy))
+        
+        if matches:
+            self.remove_matches(matches)
+    
+    def deactivate_all_bombs(self):
+        """Deactivate all power-up modes"""
+        self.color_bomb_active = False
+        self.row_bomb_active = False
+        self.col_bomb_active = False
+    
     def toggle_color_bomb(self):
         """Toggle color bomb mode"""
         if self.state != Board.IDLE:
             return
-        self.color_bomb_active = not self.color_bomb_active
+        was_active = self.color_bomb_active
+        self.deactivate_all_bombs()
+        self.color_bomb_active = not was_active
         # Deselect any selected block when activating bomb
         if self.color_bomb_active and self.selected_block:
             self.selected_block.selected = False
             self.selected_block = None
     
+    def toggle_row_bomb(self):
+        """Toggle row bomb mode"""
+        if self.state != Board.IDLE:
+            return
+        was_active = self.row_bomb_active
+        self.deactivate_all_bombs()
+        self.row_bomb_active = not was_active
+        # Deselect any selected block when activating bomb
+        if self.row_bomb_active and self.selected_block:
+            self.selected_block.selected = False
+            self.selected_block = None
+    
+    def toggle_col_bomb(self):
+        """Toggle column bomb mode"""
+        if self.state != Board.IDLE:
+            return
+        was_active = self.col_bomb_active
+        self.deactivate_all_bombs()
+        self.col_bomb_active = not was_active
+        # Deselect any selected block when activating bomb
+        if self.col_bomb_active and self.selected_block:
+            self.selected_block.selected = False
+            self.selected_block = None
+    
     def on_right_click(self):
-        """Handle right click - cancel selection"""
+        """Handle right click - cancel selection and power-ups"""
         if self.selected_block:
             self.selected_block.selected = False
             self.selected_block = None
+        self.deactivate_all_bombs()
     
     def check_swap_complete(self):
         """Check if swap animation is complete"""
@@ -639,26 +722,28 @@ class Board:
 score_font = pygame.font.Font(None, 48)
 combo_font = pygame.font.Font(None, 36)
 
-# Color bomb icon
-BOMB_ICON_SIZE = 60
-BOMB_ICON_X = SCREEN_WIDTH - BOMB_ICON_SIZE - 20
-BOMB_ICON_Y = GRID_HEIGHT * (BLOCK_SIZE + BLOCK_SPACE) + BLOCK_SPACE + 20
+# Power-up icons
+ICON_SIZE = 60
+ICON_SPACING = 10
+ICONS_Y = GRID_HEIGHT * (BLOCK_SIZE + BLOCK_SPACE) + BLOCK_SPACE + 20
 
-def draw_bomb_icon(surface, x, y, active=False):
+# Position icons from right to left: color bomb, column bomb, row bomb
+COLOR_BOMB_X = SCREEN_WIDTH - ICON_SIZE - 20
+COL_BOMB_X = COLOR_BOMB_X - ICON_SIZE - ICON_SPACING
+ROW_BOMB_X = COL_BOMB_X - ICON_SIZE - ICON_SPACING
+
+def draw_color_bomb_icon(surface, x, y, active=False):
     """Draw the color bomb power-up icon"""
     # Background circle
     bg_color = (255, 200, 100) if active else (80, 80, 80)
-    pygame.draw.circle(surface, bg_color, (x + BOMB_ICON_SIZE // 2, y + BOMB_ICON_SIZE // 2), BOMB_ICON_SIZE // 2)
-    pygame.draw.circle(surface, (255, 255, 255), (x + BOMB_ICON_SIZE // 2, y + BOMB_ICON_SIZE // 2), BOMB_ICON_SIZE // 2, 3)
+    pygame.draw.circle(surface, bg_color, (x + ICON_SIZE // 2, y + ICON_SIZE // 2), ICON_SIZE // 2)
+    pygame.draw.circle(surface, (255, 255, 255), (x + ICON_SIZE // 2, y + ICON_SIZE // 2), ICON_SIZE // 2, 3)
     
-    # Draw a simple "star burst" pattern to represent the bomb
-    center_x = x + BOMB_ICON_SIZE // 2
-    center_y = y + BOMB_ICON_SIZE // 2
-    inner_color = (255, 50, 50) if active else (200, 200, 200)
+    center_x = x + ICON_SIZE // 2
+    center_y = y + ICON_SIZE // 2
     
     # Draw colored dots in a pattern
     for i, color in enumerate([PINK, RED, PURPLE, BLUE, GREEN, ORANGE]):
-        angle = i * 60 * 3.14159 / 180
         dot_x = center_x + int(15 * pygame.math.Vector2(1, 0).rotate(i * 60).x)
         dot_y = center_y + int(15 * pygame.math.Vector2(1, 0).rotate(i * 60).y)
         pygame.draw.circle(surface, color, (dot_x, dot_y), 6)
@@ -666,13 +751,65 @@ def draw_bomb_icon(surface, x, y, active=False):
     # Center dot
     pygame.draw.circle(surface, (255, 255, 255), (center_x, center_y), 8)
 
-def is_bomb_icon_clicked(pos):
-    """Check if the bomb icon was clicked"""
+def draw_row_bomb_icon(surface, x, y, active=False):
+    """Draw the row clear power-up icon (horizontal arrow)"""
+    bg_color = (100, 200, 255) if active else (80, 80, 80)
+    pygame.draw.circle(surface, bg_color, (x + ICON_SIZE // 2, y + ICON_SIZE // 2), ICON_SIZE // 2)
+    pygame.draw.circle(surface, (255, 255, 255), (x + ICON_SIZE // 2, y + ICON_SIZE // 2), ICON_SIZE // 2, 3)
+    
+    center_x = x + ICON_SIZE // 2
+    center_y = y + ICON_SIZE // 2
+    
+    # Draw horizontal arrow (left and right)
+    arrow_color = (255, 255, 255)
+    # Left arrow
+    pygame.draw.polygon(surface, arrow_color, [
+        (center_x - 20, center_y),
+        (center_x - 8, center_y - 8),
+        (center_x - 8, center_y + 8)
+    ])
+    # Right arrow
+    pygame.draw.polygon(surface, arrow_color, [
+        (center_x + 20, center_y),
+        (center_x + 8, center_y - 8),
+        (center_x + 8, center_y + 8)
+    ])
+    # Center line
+    pygame.draw.rect(surface, arrow_color, (center_x - 8, center_y - 3, 16, 6))
+
+def draw_col_bomb_icon(surface, x, y, active=False):
+    """Draw the column clear power-up icon (vertical arrow)"""
+    bg_color = (200, 100, 255) if active else (80, 80, 80)
+    pygame.draw.circle(surface, bg_color, (x + ICON_SIZE // 2, y + ICON_SIZE // 2), ICON_SIZE // 2)
+    pygame.draw.circle(surface, (255, 255, 255), (x + ICON_SIZE // 2, y + ICON_SIZE // 2), ICON_SIZE // 2, 3)
+    
+    center_x = x + ICON_SIZE // 2
+    center_y = y + ICON_SIZE // 2
+    
+    # Draw vertical arrow (up and down)
+    arrow_color = (255, 255, 255)
+    # Up arrow
+    pygame.draw.polygon(surface, arrow_color, [
+        (center_x, center_y - 20),
+        (center_x - 8, center_y - 8),
+        (center_x + 8, center_y - 8)
+    ])
+    # Down arrow
+    pygame.draw.polygon(surface, arrow_color, [
+        (center_x, center_y + 20),
+        (center_x - 8, center_y + 8),
+        (center_x + 8, center_y + 8)
+    ])
+    # Center line
+    pygame.draw.rect(surface, arrow_color, (center_x - 3, center_y - 8, 6, 16))
+
+def is_icon_clicked(pos, icon_x, icon_y):
+    """Check if an icon was clicked"""
     px, py = pos
-    center_x = BOMB_ICON_X + BOMB_ICON_SIZE // 2
-    center_y = BOMB_ICON_Y + BOMB_ICON_SIZE // 2
+    center_x = icon_x + ICON_SIZE // 2
+    center_y = icon_y + ICON_SIZE // 2
     dist = ((px - center_x) ** 2 + (py - center_y) ** 2) ** 0.5
-    return dist <= BOMB_ICON_SIZE // 2
+    return dist <= ICON_SIZE // 2
 
 # Create board
 board = Board()
@@ -689,15 +826,17 @@ while running:
             running = False
         elif event.type == pygame.MOUSEBUTTONDOWN:
             if event.button == pygame.BUTTON_LEFT:
-                # Check if bomb icon was clicked
-                if is_bomb_icon_clicked(event.pos):
+                # Check if any power-up icon was clicked
+                if is_icon_clicked(event.pos, COLOR_BOMB_X, ICONS_Y):
                     board.toggle_color_bomb()
+                elif is_icon_clicked(event.pos, ROW_BOMB_X, ICONS_Y):
+                    board.toggle_row_bomb()
+                elif is_icon_clicked(event.pos, COL_BOMB_X, ICONS_Y):
+                    board.toggle_col_bomb()
                 else:
                     board.on_click(event.pos)
             elif event.button == pygame.BUTTON_RIGHT:
                 board.on_right_click()
-                # Also cancel color bomb mode on right click
-                board.color_bomb_active = False
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_r:
                 # Reset game
@@ -722,14 +861,21 @@ while running:
         combo_text = combo_font.render(f"Combo x{board.combo}!", True, (200, 50, 50))
         screen.blit(combo_text, (20, score_y + 40))
     
-    # Draw color bomb icon
-    draw_bomb_icon(screen, BOMB_ICON_X, BOMB_ICON_Y, board.color_bomb_active)
+    # Draw power-up icons
+    draw_row_bomb_icon(screen, ROW_BOMB_X, ICONS_Y, board.row_bomb_active)
+    draw_col_bomb_icon(screen, COL_BOMB_X, ICONS_Y, board.col_bomb_active)
+    draw_color_bomb_icon(screen, COLOR_BOMB_X, ICONS_Y, board.color_bomb_active)
     
-    # Draw "Color Bomb" label or active indicator
+    # Draw active power-up indicator
     if board.color_bomb_active:
-        bomb_text = combo_font.render("Click a color!", True, (255, 100, 50))
-        text_x = BOMB_ICON_X - bomb_text.get_width() - 10
-        screen.blit(bomb_text, (text_x, BOMB_ICON_Y + 15))
+        hint_text = combo_font.render("Click a color!", True, (255, 200, 100))
+        screen.blit(hint_text, (ROW_BOMB_X, ICONS_Y + ICON_SIZE + 5))
+    elif board.row_bomb_active:
+        hint_text = combo_font.render("Click a row!", True, (100, 200, 255))
+        screen.blit(hint_text, (ROW_BOMB_X, ICONS_Y + ICON_SIZE + 5))
+    elif board.col_bomb_active:
+        hint_text = combo_font.render("Click a column!", True, (200, 100, 255))
+        screen.blit(hint_text, (ROW_BOMB_X, ICONS_Y + ICON_SIZE + 5))
     
     pygame.display.flip()
 

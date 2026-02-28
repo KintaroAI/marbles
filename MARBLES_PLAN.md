@@ -229,18 +229,63 @@ This makes `draw.py` importable without side effects.
 
 ## Implementation Order
 
-| Step | Phase | Description | Risk |
-|------|-------|-------------|------|
-| 1 | 1.1 | Fix BFS duplicate-visit bug | Low — localized change |
-| 2 | 1.2 | Fix float/int snap comparison | Low — localized change |
-| 3 | 1.3 | Fix `if` → `elif` in check_state | Low — behavior change, test carefully |
-| 4 | 2.* | Dead code removal, typo fix, cleanup | Low — no behavior change |
-| 5 | 3.* | Decouple global board from Bubble | Medium — touches many call sites |
-| 6 | 4.* | Split into modules | Medium — file reorganization |
-| 7 | 5.* | Logging, main() wrapper | Low — final polish |
-
-Each step should be a separate commit, tested by running the game after each change.
+| Step | Phase | Description | Risk | Status |
+|------|-------|-------------|------|--------|
+| 1 | 1.1 | Fix BFS duplicate-visit bug | Low — localized change | ✅ Done |
+| 2 | 1.2 | Fix float/int snap comparison | Low — localized change | ✅ Done |
+| 3 | 1.3 | Fix `if` → `elif` in check_state | Low — behavior change, test carefully | ✅ Done |
+| 4 | 2.* | Dead code removal, typo fix, cleanup | Low — no behavior change | ✅ Done |
+| 5 | 3.* | Decouple global board from Bubble | Medium — touches many call sites | ✅ Done |
+| 6 | 4.* | Split into modules | Medium — file reorganization | ✅ Done |
+| 7 | 5.* | Logging, main() wrapper | Low — final polish | ✅ Done |
 
 ---
 
-*Ready for review. Once approved, we'll implement step by step.*
+## Summary of Changes
+
+### Phase 1 — Bug Fixes
+- **BFS duplicate-visit** (`match_color_count`, `kill_same_color`): Changed `seen` set to mark cells on enqueue (not dequeue), preventing inflated counts and double-removal of bubbles.
+- **Float/int snap comparison** (`snap`): Replaced `(bubble.x, bubble.y)` pixel-position occupied set with `(bubble.cx, bubble.cy)` cell-coordinate set. Also skips `second_preview_bubble` in the occupied check.
+- **if → elif** (`check_state`): Converted `if` chain to `elif` so only one state branch executes per frame, preventing cascading state processing within a single tick.
+
+### Phase 2 — Cleanup
+- Deleted dead `build_grid_old()` method.
+- Removed unnecessary `1.0*` float cast in `Bubble.update()`.
+- Fixed typo `neigbour_cells` → `neighbour_cells` across all references.
+- Added explanatory comment for the `TRIES` constant.
+
+### Phase 3 — Decoupled Globals
+- `Bubble` now receives `board` via constructor parameter (`board=None`) instead of reaching into the module-level `board` global.
+- All `Bubble(...)` construction sites in `Board` pass `self` as the board argument.
+- `Bubble.update()` and `Bubble.set_cell_pos()` use `self.board` with a guard (`if self.board`) for safety.
+
+### Phase 4 — Split Into Modules
+
+| File | Contents |
+|------|----------|
+| `constants.py` | All constants, colors, event IDs, `DEBUG`, `COLORS` list |
+| `utils.py` | Pure helpers: `border_color`, `highlight_color`, `load_bubble_image`, `get_center`, `get_distance`, `neighbour_cells`, `simple_neighbour_cells`, `draw_multiline_text` |
+| `bubble.py` | `Bubble` sprite class |
+| `board.py` | `Board` class with state machine and all game logic |
+| `draw.py` | Entry point only: `main()` with pygame init, game loop, event handling |
+
+### Phase 5 — Logging & Entry Point
+- Replaced `probe()` (which used expensive `inspect.stack()`) with `logging.getLogger(__name__)` across all modules.
+- Removed `inspect` import entirely.
+- Wrapped all module-level code in `draw.py` into `main()` with `if __name__ == '__main__'` guard — game is now importable without side effects.
+- Logging is configured at DEBUG level when `DEBUG = True`.
+
+### Final File Structure
+
+```
+marbles/
+├── draw.py              # Entry point — main() + game loop (~100 lines)
+├── board.py             # Board class — state machine + game logic (~270 lines)
+├── bubble.py            # Bubble sprite class (~85 lines)
+├── constants.py         # All constants, colors, events (~40 lines)
+├── utils.py             # Pure utility functions (~100 lines)
+├── swap.py              # Swap game (unchanged)
+├── README.md
+├── SWAP_PLAN.md
+└── MARBLES_PLAN.md
+```

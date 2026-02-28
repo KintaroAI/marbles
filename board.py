@@ -33,7 +33,8 @@ class Board:
         (REMOVE_DISJOINT, RELOAD),
     }
 
-    def __init__(self):
+    def __init__(self, stats=None):
+        self.stats = stats
         self.second_preview_bubble = None
         self.preview_bubble = None
         self.current_bubble = None
@@ -117,6 +118,8 @@ class Board:
         if not self.preview_bubble:
             return
         assert self.state is Board.READY
+        if self.stats:
+            self.stats.record_shot()
         self.shoot_bubble_to_target(self.preview_bubble, pygame.mouse.get_pos())
         self.current_bubble = self.preview_bubble
         self.preview_bubble = None
@@ -231,7 +234,10 @@ class Board:
     def traverse(self, start_cell):
         assert self.state is Board.REMOVING_BUBBLES
         grid_bubbles = self.build_grid()
-        if self.match_color_count(start_cell, grid_bubbles) >= 3:
+        match_count = self.match_color_count(start_cell, grid_bubbles)
+        if match_count >= 3:
+            if self.stats:
+                self.stats.record_match(match_count)
             self.kill_same_color(start_cell, grid_bubbles)
         else:
             self.tries -= 1
@@ -312,11 +318,15 @@ class Board:
                     continue
                 cells.append(next_cell)
 
+        disjoint_count = 0
         for cell, bubble in grid_bubbles.items():
             if not bubble:
                 continue
             if cell not in seen:
                 self.removing_bubbles.append(bubble)
+                disjoint_count += 1
+        if disjoint_count and self.stats:
+            self.stats.record_disjoint_removal(disjoint_count)
         if self.removing_bubbles:
             self.trigger_state_change(Board.REMOVING_BUBBLES)
         else:

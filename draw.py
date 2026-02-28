@@ -12,13 +12,29 @@ from constants import (
 )
 from utils import draw_multiline_text
 from board import Board
+from stats import GameStats, snapshot_stats_file
 
 logger = logging.getLogger(__name__)
 
 
-def on_game_over(board, win):
+def start_new_game(board, game_stats):
+    """Reset stats and record initial board state for a new game."""
+    game_stats.reset()
+    game_stats.record_game_start(
+        bubble_count=len(board.bubbles),
+        color_count=len(board.colors),
+    )
+
+
+def on_game_over(board, game_stats, win):
+    game_stats.finalize(
+        win=win,
+        bubbles_remaining=len(board.bubbles),
+        rows_advanced=board.step,
+    )
     board.init()
     board.start_shimmer()
+    start_new_game(board, game_stats)
 
 
 def on_state_change(board, from_state, to_state):
@@ -39,8 +55,12 @@ def main():
     clock = pygame.time.Clock()
     fps = 120
 
-    board = Board()
+    snapshot_stats_file()
+
+    game_stats = GameStats()
+    board = Board(stats=game_stats)
     board.init()
+    start_new_game(board, game_stats)
     force_refresh = False
     last_changed_time = time.time()
     last_pos = None
@@ -60,7 +80,7 @@ def main():
             if event.type == pygame.QUIT:
                 running = False
             if event.type == GAME_OVER_EVENT:
-                on_game_over(board, event.message)
+                on_game_over(board, game_stats, event.message)
                 break
             if event.type == STATE_CHANGE_EVENT:
                 on_state_change(board, *(event.message))

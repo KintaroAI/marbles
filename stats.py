@@ -23,6 +23,55 @@ def append_stats(record):
         f.write(json.dumps(record) + "\n")
 
 
+def load_aggregate_stats():
+    """Load all historical records and compute aggregate stats.
+
+    Returns a dict with aggregate values, or None if no history exists.
+    """
+    if not STATS_FILE.exists():
+        return None
+
+    records = []
+    with open(STATS_FILE, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    if not records:
+        return None
+
+    wins = [r for r in records if r["result"] == "win"]
+
+    agg = {
+        "games_played": len(records),
+        "wins": len(wins),
+        "losses": len(records) - len(wins),
+        "win_rate": len(wins) / len(records),
+        "best_accuracy": max(r["accuracy"] for r in records),
+        "best_max_match": max(r["max_match_size"] for r in records),
+        "most_destroyed": max(r["bubbles_destroyed"] for r in records),
+        "most_matches": max(r["matches_made"] for r in records),
+    }
+
+    if wins:
+        agg["best_duration"] = min(r["duration_sec"] for r in wins)
+        agg["best_active_time"] = min(r["active_play_time_sec"] for r in wins)
+        agg["fewest_shots"] = min(r["shots_fired"] for r in wins)
+        agg["fewest_rows"] = min(r["rows_advanced"] for r in wins)
+    else:
+        agg["best_duration"] = None
+        agg["best_active_time"] = None
+        agg["fewest_shots"] = None
+        agg["fewest_rows"] = None
+
+    return agg
+
+
 class GameStats:
     ACTIVE_TIME_CAP = 10.0
 
